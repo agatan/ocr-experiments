@@ -54,11 +54,13 @@ class ListDataset(data.Dataset):
         n_imgs = len(imgs)
         inputs = torch.zeros(n_imgs, 3, h, w)
         loc_targets = []
+        masks = []
         for i in range(n_imgs):
             inputs[i] = imgs[i]
-            loc_target = self.encoder.encode(boxes[i], self.input_size)
+            loc_target, mask = self.encoder.encode(boxes[i], self.input_size)
             loc_targets.append(loc_target)
-        return inputs, torch.stack(loc_targets)
+            masks.append(mask)
+        return inputs, torch.stack(loc_targets), torch.stack(masks)
 
     def __len__(self):
         return len(self.fnames)
@@ -72,8 +74,7 @@ def main():
     ])
     dataset = ListDataset(root='out', transform=transform)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=1, collate_fn=dataset.collate_fn)
-    for images, loc_targets in dataloader:
+    for images, loc_targets, mask in dataloader:
         grid = torchvision.utils.make_grid(images, 1)
         torchvision.utils.save_image(grid, 'a.jpg')
         break
-
