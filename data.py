@@ -32,7 +32,7 @@ class ListDataset(data.Dataset):
                 xmin = float(b['left'])
                 ymin = float(b['top'])
                 xmax = xmin + float(b['width'])
-                ymax = xmin + float(b['height'])
+                ymax = ymin + float(b['height'])
                 box.append([xmin, ymin, xmax, ymax])
             self.boxes.append(torch.Tensor(box))
 
@@ -72,9 +72,12 @@ def main():
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
-    dataset = ListDataset(root='out', transform=transform)
+    dataset = ListDataset(root='test', transform=transform)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=1, collate_fn=dataset.collate_fn)
     for images, loc_targets, mask in dataloader:
         grid = torchvision.utils.make_grid(images, 1)
         torchvision.utils.save_image(grid, 'a.jpg')
         break
+
+
+main()
