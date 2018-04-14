@@ -86,6 +86,6 @@ class DataEncoder():
         loc_xy = (boxes[:, :2] - anchor_boxes[:, :2]) / anchor_boxes[:, 2:]
         loc_wh = torch.log(boxes[:, 2:] / anchor_boxes[:, 2:])
         loc_targets = torch.cat([loc_xy, loc_wh], 1)
-        masks = torch.ones(max_ids.size())
+        masks = torch.ones(max_ids.size()).byte()
         masks[max_ious < 0.5] = 0
         return loc_targets, masks
