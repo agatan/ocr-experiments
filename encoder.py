@@ -24,7 +24,7 @@ def xyxy2xywh(boxes):
 
 def box_iou(box1, box2):
     lt = torch.max(box1[:, None, :2], box2[:, :2])  # N, M, 2
-    rb = torch.max(box1[:, None, :2], box2[:, :2])  # N, M, 2
+    rb = torch.min(box1[:, None, 2:], box2[:, 2:])  # N, M, 2
 
     wh = (rb - lt + 1).clamp(min=0)
     inter = wh[:, :, 0] * wh[:, :, 1]  # N, M
@@ -86,4 +86,6 @@ class DataEncoder():
         loc_xy = (boxes[:, :2] - anchor_boxes[:, :2]) / anchor_boxes[:, 2:]
         loc_wh = torch.log(boxes[:, 2:] / anchor_boxes[:, 2:])
         loc_targets = torch.cat([loc_xy, loc_wh], 1)
-        return loc_targets
+        masks = torch.ones(max_ids.size())
+        masks[max_ious < 0.5] = 0
+        return loc_targets, masks
