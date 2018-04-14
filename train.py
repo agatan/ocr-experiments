@@ -48,8 +48,8 @@ def train(epoch):
         mask = Variable(mask)
 
         optimizer.zero_grad()
-        loc_preds = net(inputs)
-        loss = criterion(loc_preds, loc_targets, mask)
+        loc_preds, conf_preds = net(inputs)
+        loss = criterion(loc_preds, loc_targets, conf_preds, mask)
         loss.backward()
         optimizer.step()
         train_loss += loss.data[0]

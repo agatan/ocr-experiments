@@ -89,3 +89,21 @@ class DataEncoder():
         masks = torch.ones(max_ids.size()).byte()
         masks[max_ious < 0.5] = 0
         return loc_targets, masks
+
+    def decode(self, loc_preds, conf_preds, input_size):
+        input_size = torch.Tensor(input_size)
+        anchor_boxes = self._get_anchor_boxes(input_size)
+
+        loc_xy = loc_preds[:, :2]
+        loc_wh = loc_preds[:, 2:]
+
+        xy = loc_xy * anchor_boxes[:, 2:] + anchor_boxes[:, :2]
+        wh = loc_wh.exp() * anchor_boxes[:, 2:]
+        boxes = torch.cat([xy - wh / 2, xy + wh / 2], 1)
+
+        score = conf_preds.sigmoid().squeeze(1)
+        ids = score > 0.5
+        ids = ids.nonzero().squeeze()
+        if len(ids) == 0:
+            return []
+        return boxes[ids]

@@ -93,15 +93,20 @@ class SSOCR(nn.Module):
         super().__init__()
         self.fpn = FPN50()
         self.loc_head = self._make_head(9 * 4)
+        self.conf_head = self._make_head(9)
 
     def forward(self, x):
         fms = self.fpn(x)
         loc_preds = []
+        conf_preds = []
         for fm in fms:
             loc_pred = self.loc_head(fm)
             loc_pred = loc_pred.permute(0, 2, 3, 1).contiguous().view(x.size(0), -1, 4)
             loc_preds.append(loc_pred)
-        return torch.cat(loc_preds, 1)
+            conf_pred = self.conf_head(fm)
+            conf_pred = conf_pred.permute(0, 2, 3, 1).contiguous().view(x.size(0), -1, 1)
+            conf_preds.append(conf_pred)
+        return torch.cat(loc_preds, 1), torch.cat(conf_preds, 1)
 
     def _make_head(self, out_chans):
         layers = []
