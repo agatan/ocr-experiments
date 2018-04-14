@@ -13,7 +13,7 @@ class ListDataset(data.Dataset):
         self.root = root
         self.transform = transform
         self.encoder = DataEncoder()
-        self.input_size = [900, 600] # W, H
+        self.input_size = [300, 200] # W, H
 
         self.fnames = []
         self.boxes = []
