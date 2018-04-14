@@ -97,3 +97,6 @@ ENV/
 
 
 out/
+train/
+test/
+*.jpg
