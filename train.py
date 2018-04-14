@@ -68,8 +68,8 @@ def test(epoch):
         loc_targets = Variable(loc_targets)
         mask = Variable(mask)
 
-        loc_preds = net(inputs)
-        loss = criterion(loc_preds, loc_targets, mask)
+        loc_preds, conf_preds = net(inputs)
+        loss = criterion(loc_preds, loc_targets, conf_preds, mask)
         test_loss += loss.data[0]
         print('test_loss: %.3f | avg_loss: %.3f' % (loss.data[0], test_loss/(batch_idx+1)))
 
