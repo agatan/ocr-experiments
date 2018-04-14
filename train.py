@@ -49,7 +49,7 @@ def train(epoch):
 
         optimizer.zero_grad()
         loc_preds = net(inputs)
-        loss = criterion(loc_preds, mask)
+        loss = criterion(loc_preds, loc_targets, mask)
         loss.backward()
         optimizer.step()
         train_loss += loss.data[0]
@@ -59,13 +59,17 @@ def test(epoch):
     print('\nTest')
     net.eval()
     test_loss = 0
-    for batch_idx, (inputs, loc_targets, cls_targets) in enumerate(testloader):
-        inputs = Variable(inputs.cuda(), volatile=True)
-        loc_targets = Variable(loc_targets.cuda())
-        cls_targets = Variable(cls_targets.cuda())
+    for batch_idx, (inputs, loc_targets, mask) in enumerate(testloader):
+        if CUDA:
+            inputs = inputs.cuda()
+            loc_targets = loc_targets.cuda()
+            mask = mask.cuda()
+        inputs = Variable(inputs)
+        loc_targets = Variable(loc_targets)
+        mask = Variable(mask)
 
-        loc_preds, cls_preds = net(inputs)
-        loss = criterion(loc_preds, loc_targets, cls_preds, cls_targets)
+        loc_preds = net(inputs)
+        loss = criterion(loc_preds, loc_targets, mask)
         test_loss += loss.data[0]
         print('test_loss: %.3f | avg_loss: %.3f' % (loss.data[0], test_loss/(batch_idx+1)))
 
