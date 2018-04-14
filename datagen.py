@@ -40,7 +40,7 @@ def make_image(width, height, bgcolor):
         text = ''.join((np.random.choice(charset) for _ in range(text_len)))
 
         top, left = np.random.randint(0, height), np.random.randint(0, width)
-        w, h, f = drawn_bb(random_fontname(), np.random.randint(25, 50), text, width, height)
+        w, h, f = drawn_bb(random_fontname(), np.random.randint(8, 24), text, width, height)
         if top + h > height or left + w > width:
             continue
         if used[left:left+w, top:top+h].sum() > 0:
@@ -70,7 +70,7 @@ def main():
     if not os.path.isdir(args.o):
         os.makedirs(args.o)
     for i in tqdm(range(0, args.n), total=args.n):
-        image, boxes = make_image(900, 600, (255, 255, 255))
+        image, boxes = make_image(300, 200, (255, 255, 255))
         with open(os.path.join(args.o, f'{i}.json'), 'w') as f:
             json.dump(dict(file=f'{i}.png', boxes=boxes), f)
         with open(os.path.join(args.o, f'{i}.png'), 'wb') as f:
