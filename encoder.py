@@ -71,7 +71,7 @@ class DataEncoder():
         self.anchor_areas = [32*32., 64*64., 128 *
                              128., 256*256., 512*512.]  # p3 -> p7
         self.aspect_ratios = [2/1., 4/1., 8/1.]
-        self.scale_ratios = [1., pow(2, 1/3.), pow(2, 2/3.)]
+        self.scale_ratios = [0.5, 1.0, 1.5]
         self.anchor_wh = self._get_anchor_wh()
 
     def _get_anchor_wh(self):
@@ -135,7 +135,7 @@ class DataEncoder():
         boxes = torch.cat([xy - wh / 2, xy + wh / 2], 1)
 
         score = conf_preds.sigmoid().squeeze(1)
-        ids = score > 0.1
+        ids = score > 0.5
         ids = ids.nonzero().squeeze()
         if len(ids) == 0:
             return None
