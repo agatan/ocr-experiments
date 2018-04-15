@@ -34,11 +34,43 @@ def box_iou(box1, box2):
     return iou
 
 
+def box_nms(bboxes, scores, thres=0.5):
+    x1 = bboxes[:, 0]
+    y1 = bboxes[:, 1]
+    x2 = bboxes[:, 2]
+    y2 = bboxes[:, 3]
+
+    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+    _, order = scores.sort(0, descending=True)
+
+    keep = []
+    while order.numel() > 0:
+        i = order[0]
+        keep.append(i)
+        if order.numel() == 1:
+            break
+        xx1 = x1[order[1:]].clamp(min=x1[i])
+        yy1 = y1[order[1:]].clamp(min=y1[i])
+        xx2 = x2[order[1:]].clamp(max=x2[i])
+        yy2 = y2[order[1:]].clamp(max=y2[i])
+
+        w = (xx2 - xx1 + 1).clamp(min=0)
+        h = (yy2 - yy1 + 1).clamp(min=0)
+        inter = w * h
+
+        ovr = inter / (areas[i] + areas[order[1:]] - inter)
+        ids = (ovr <= thres).nonzero().squeeze()
+        if ids.numel() == 0:
+            break
+        order = order[ids+1]
+    return torch.LongTensor(keep)
+
+
 class DataEncoder():
     def __init__(self):
         self.anchor_areas = [32*32., 64*64., 128 *
                              128., 256*256., 512*512.]  # p3 -> p7
-        self.aspect_ratios = [1/2., 1/1., 2/1.]
+        self.aspect_ratios = [2/1., 4/1., 8/1.]
         self.scale_ratios = [1., pow(2, 1/3.), pow(2, 2/3.)]
         self.anchor_wh = self._get_anchor_wh()
 
@@ -86,8 +118,9 @@ class DataEncoder():
         loc_xy = (boxes[:, :2] - anchor_boxes[:, :2]) / anchor_boxes[:, 2:]
         loc_wh = torch.log(boxes[:, 2:] / anchor_boxes[:, 2:])
         loc_targets = torch.cat([loc_xy, loc_wh], 1)
-        masks = torch.ones(max_ids.size()).byte()
-        masks[max_ious < 0.5] = 0
+        masks = torch.ones(max_ids.size()).long()
+        masks[max_ious < 0.7] = 0
+        masks[(max_ious > 0.3) & (max_ious < 0.7)] = -1
         return loc_targets, masks
 
     def decode(self, loc_preds, conf_preds, input_size):
@@ -102,8 +135,9 @@ class DataEncoder():
         boxes = torch.cat([xy - wh / 2, xy + wh / 2], 1)
 
         score = conf_preds.sigmoid().squeeze(1)
-        ids = score > 0.5
+        ids = score > 0.1
         ids = ids.nonzero().squeeze()
         if len(ids) == 0:
-            return []
-        return boxes[ids]
+            return None
+        keep = box_nms(boxes[ids], score[ids])
+        return boxes[ids][keep]
