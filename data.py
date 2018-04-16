@@ -54,30 +54,27 @@ class ListDataset(data.Dataset):
         n_imgs = len(imgs)
         inputs = torch.zeros(n_imgs, 3, h, w)
         loc_targets = []
-        masks = []
         for i in range(n_imgs):
             inputs[i] = imgs[i]
-            loc_target, mask = self.encoder.encode(boxes[i], self.input_size)
+            loc_target = self.encoder.encode(boxes[i], self.input_size)
             loc_targets.append(loc_target)
-            masks.append(mask)
-        return inputs, torch.stack(loc_targets), torch.stack(masks)
+        return inputs, torch.stack(loc_targets)
 
     def __len__(self):
         return len(self.fnames)
 
 
-def main():
+def test():
     import torchvision
     import torchvision.transforms as transforms
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
-    dataset = ListDataset(root='test', transform=transform)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=1, collate_fn=dataset.collate_fn)
-    for images, loc_targets, mask in dataloader:
+    dataset = ListDataset(root='train', transform=transform)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=False, num_workers=1, collate_fn=dataset.collate_fn)
+    for images, loc_targets in dataloader:
         grid = torchvision.utils.make_grid(images, 1)
         torchvision.utils.save_image(grid, 'a.jpg')
+        print(images.size())
+        print(loc_targets.size())
         break
-
-
-main()

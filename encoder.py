@@ -11,9 +11,9 @@ def meshgrid(x, y):
 
 
 def xywh2xyxy(boxes):
-    xy = boxes[:, :2]
-    wh = boxes[:, 2:]
-    return torch.cat([xy - wh / 2, xy + wh / 2], 1)
+    xy = boxes[..., :2]
+    wh = boxes[..., 2:]
+    return torch.cat([xy - wh / 2, xy + wh / 2], -1)
 
 
 def xyxy2xywh(boxes):
@@ -23,13 +23,13 @@ def xyxy2xywh(boxes):
 
 
 def box_iou(box1, box2):
-    lt = torch.max(box1[:, None, :2], box2[:, :2])  # N, M, 2
-    rb = torch.min(box1[:, None, 2:], box2[:, 2:])  # N, M, 2
+    lt = torch.max(box1[..., None, :2], box2[:, :2])  # N, M, 2
+    rb = torch.min(box1[..., None, 2:], box2[:, 2:])  # N, M, 2
 
     wh = (rb - lt + 1).clamp(min=0)
     inter = wh[:, :, 0] * wh[:, :, 1]  # N, M
-    area1 = (box1[:, 2] - box1[:, 0] + 1) * (box1[:, 3] - box1[:, 1] + 1)
-    area2 = (box2[:, 2] - box2[:, 0] + 1) * (box2[:, 3] - box2[:, 1] + 1)
+    area1 = (box1[..., 2] - box1[..., 0] + 1) * (box1[..., 3] - box1[..., 1] + 1)
+    area2 = (box2[..., 2] - box2[..., 0] + 1) * (box2[..., 3] - box2[..., 1] + 1)
     iou = inter / (area1[:, None] + area2 - inter)
     return iou
 
@@ -68,10 +68,8 @@ def box_nms(bboxes, scores, thres=0.5):
 
 class DataEncoder():
     def __init__(self):
-        self.anchor_areas = [32*32., 64*64., 128 *
-                             128., 256*256., 512*512.]  # p3 -> p7
+        self.anchor_areas = [32*32., 64*64., 128 * 128.]  # p3 -> p7
         self.aspect_ratios = [2/1., 4/1., 8/1.]
-        self.scale_ratios = [0.5, 1.0, 1.5]
         self.anchor_wh = self._get_anchor_wh()
 
     def _get_anchor_wh(self):
@@ -80,32 +78,30 @@ class DataEncoder():
             for ar in self.aspect_ratios:
                 h = math.sqrt(s / ar)
                 w = ar * h
-                for sr in self.scale_ratios:
-                    anchor_h = h * sr
-                    anchor_w = w * sr
-                    anchor_wh.append([anchor_w, anchor_h])
-        num_fms = len(self.anchor_areas)
-        return torch.Tensor(anchor_wh).view(num_fms, -1, 2)
+                anchor_wh.append([w, h])
+        return torch.Tensor(anchor_wh).view(9, 2)
 
     def _get_anchor_boxes(self, input_size):
-        num_fms = len(self.anchor_areas)
-        fm_sizes = [(input_size / pow(2., i + 3)).ceil()
-                    for i in range(num_fms)]
+        fm_size = (input_size / pow(2, 2)).ceil()
 
-        boxes = []
-        for i in range(num_fms):
-            fm_size = fm_sizes[i]
-            grid_size = input_size / fm_size
-            fm_w, fm_h = int(fm_size[0]), int(fm_size[1])
-            xy = meshgrid(fm_w, fm_h) + 0.5
-            xy = (xy * grid_size).view(fm_h, fm_w, 1, 2).expand(fm_h,
-                                                                fm_w, 9, 2)  # (fm_h, fm_w, #anchor, (x, y)
-            wh = self.anchor_wh[i].view(1, 1, 9, 2).expand(fm_h, fm_w, 9, 2)
-            box = torch.cat([xy, wh], 3)  # [x, y, w, h]
-            boxes.append(box.view(-1, 4))
-        return torch.cat(boxes, 0)
+        grid_size = input_size / fm_size
+        fm_w, fm_h = int(fm_size[0]), int(fm_size[1])
+        xy = meshgrid(fm_w, fm_h) + 0.5
+        xy = (xy * grid_size).view(fm_h, fm_w, 1, 2).expand(fm_h,
+                                                            fm_w, 9, 2)  # (fm_h, fm_w, #anchor, (x, y)
+        wh = self.anchor_wh.view(1, 1, 9, 2).expand(fm_h, fm_w, 9, 2)
+        box = torch.cat([xy, wh], 3)  # [x, y, w, h]
+        return box.view(-1, 4)
 
     def encode(self, boxes, input_size):
+        '''
+        Args:
+            boxes: tensor [#box, [xmin, ymin, xmax, ymax]]
+            input_size: (W, H)
+        Returns:
+            loc_targets: tensor [#anchor(9) * [confidence, xcenter, ycenter, width, height], FH, FW]
+        '''
+        fm_size = [math.ceil(i / pow(2, 2)) for i in input_size]
         input_size = torch.Tensor(input_size)
         anchor_boxes = self._get_anchor_boxes(input_size)
 
@@ -118,10 +114,14 @@ class DataEncoder():
         loc_xy = (boxes[:, :2] - anchor_boxes[:, :2]) / anchor_boxes[:, 2:]
         loc_wh = torch.log(boxes[:, 2:] / anchor_boxes[:, 2:])
         loc_targets = torch.cat([loc_xy, loc_wh], 1)
-        masks = torch.ones(max_ids.size()).long()
+
+        masks = torch.ones(max_ids.size())
         masks[max_ious < 0.7] = 0
         masks[(max_ious > 0.3) & (max_ious < 0.7)] = -1
-        return loc_targets, masks
+
+        loc_targets = loc_targets.contiguous().view(fm_size[1], fm_size[0], 9, 4)
+        masks = masks.contiguous().view(fm_size[1], fm_size[0], 9, 1)
+        return torch.cat((masks, loc_targets), 3).view(fm_size[1], fm_size[0], 9 * 5).permute(2, 0, 1)
 
     def decode(self, loc_preds, conf_preds, input_size):
         input_size = torch.Tensor(input_size)
