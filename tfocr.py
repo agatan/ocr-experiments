@@ -235,6 +235,24 @@ def position_prediction_head(fm: tf.Tensor):
     with tf.name_scope("position_prediction_head"):
         return tf.layers.conv2d(fm, 9 * 5, kernel_size=1, strides=1)
 
+def ocr_head(features: tf.Tensor, training=False):
+    '''
+    Args:
+        features: tensor [#batch, 8, W, C]
+    '''
+    def block(x, channels):
+        x = tf.layers.conv2d(x, channels, kernel_size=3, strides=1, padding='same')
+        x = tf.nn.relu(tf.layers.batch_normalization(x, training=training))
+        x = tf.layers.max_pooling2d(x, (2, 1), strides=(2, 1))
+        return x
+
+    import datagen
+
+    with tf.name_scope("ocr"):
+        x = features
+        for c in [128, 256, len(datagen._charset()) + 1]:
+            x = block(x, c)
+        return x
 
 # In[28]:
 
@@ -301,7 +319,7 @@ def input_fn(root):
     def mapper(img, locs, bbs, texts):
         return (img, dict(box=locs, bbs=bbs, texts=texts))
     dataset = dataset.map(lambda img, locs, bbs, texts: (tf.image.per_image_standardization(img), locs, bbs, texts))
-    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [None, None, None], [None, 5], [None]))
+    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None]))
     dataset = dataset.map(mapper)
 
     return dataset
