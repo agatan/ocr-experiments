@@ -7,9 +7,13 @@
 import math
 import tensorflow as tf
 import numpy as np
+from icecream import ic
 
 
 # In[2]:
+
+INPUT_SIZE = np.array([300, 200])
+FEATURE_SIZE = np.array([75, 50])
 
 
 def meshgrid(x, y):
@@ -91,6 +95,24 @@ class DataEncoder():
         loc_targets = loc_targets.reshape(fm_size[1], fm_size[0], 9, 4)
         masks = masks.reshape(fm_size[1], fm_size[0], 9, 1)
         return np.concatenate([masks, loc_targets], axis=3).reshape(fm_size[1], fm_size[0], 9 * 5)
+
+    def reconstruct_bounding_boxes(self, outputs):
+        '''
+        Args:
+            outputs: tensor [#batch, H, W, [preds, x, y, w, h]] (x, y in 0..1)
+        Returns:
+            boxes: tensor [#batch, H * W, [preds, x1, y1, x2, y2]]
+        '''
+        anchor_boxes = tf.convert_to_tensor(self._get_anchor_boxes(INPUT_SIZE), dtype=tf.float32)
+        flatten = tf.reshape(outputs, (-1, FEATURE_SIZE[0] * FEATURE_SIZE[1] * 9, 5))
+        out_xys = flatten[..., 1:3]
+        out_whs = tf.sigmoid(flatten[..., 3:5])
+
+        preds = tf.sigmoid(flatten[..., 0:1])
+        xy = out_xys * anchor_boxes[:, 2:] + anchor_boxes[:, :2]
+        wh = tf.exp(out_whs) * anchor_boxes[:, 2:]
+        boxes = tf.concat([preds, xy - wh / 2, xy + wh / 2], axis=2)
+        return boxes
 
     def decode(self, loc_preds, input_size: np.ndarray, conf_thres=0.5):
         anchor_boxes = self._get_anchor_boxes(input_size)
@@ -247,19 +269,19 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
 
 # In[30]:
 
-
 def model_fn(features, labels, mode):
     training = mode == tf.estimator.ModeKeys.TRAIN
     fm = feature_extract(features, training=training)
     loc_preds = position_prediction_head(fm)
     if mode == tf.estimator.ModeKeys.PREDICT:
-        loc_preds = tf.reshape(loc_preds, (-1, 9, 5))
-        confidences = tf.sigmoid(loc_preds[..., 0:1])
-        loc_xy = tf.sigmoid(loc_preds[..., 1:3])
-        loc_wh = loc_preds[..., 3:5]
-        loc_preds = tf.concat([confidences, loc_xy, loc_wh], axis=-1)
-        loc_preds = tf.reshape(loc_preds, (-1, 50 * 75 * 9, 5))
-        predictions = dict(boxes=loc_preds)
+        encoder = DataEncoder()
+        boxes = encoder.reconstruct_bounding_boxes(loc_preds)
+        ic(boxes)
+        def nms_fn(boxes):
+            indices = tf.image.non_max_suppression(boxes[:, 1:], boxes[:, 0], 64)
+            return tf.gather(boxes, indices)
+        boxes = tf.map_fn(nms_fn, boxes, dtype=tf.float32)
+        predictions = dict(boxes=boxes)
         return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
     with tf.name_scope("myloss"):
@@ -279,7 +301,7 @@ def input_fn(root):
     def mapper(img, locs, bbs, texts):
         return (img, dict(box=locs, bbs=bbs, texts=texts))
     dataset = dataset.map(lambda img, locs, bbs, texts: (tf.image.per_image_standardization(img), locs, bbs, texts))
-    dataset = dataset.padded_batch(32, padded_shapes=([200, 300, 3], [None, None, None], [None, 5], [None]))
+    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [None, None, None], [None, 5], [None]))
     dataset = dataset.map(mapper)
 
     return dataset
@@ -308,15 +330,14 @@ def main():
         from PIL import Image, ImageDraw
         n = np.random.randint(0, 99)
         def eval_input_fn():
-            imgs = np.array(Image.open(f"test/{n}.png").convert("RGB"))
-            return tf.data.Dataset.from_tensors(imgs).map(lambda img: (tf.image.per_image_standardization(img), dict())).batch(1)
+            filenames = tf.constant([f'test/{n}.png' for n in range(0, 10)])
+            return tf.data.Dataset.from_tensor_slices(filenames).map(lambda f: tf.image.decode_png(tf.read_file(f), channels=3)).map(lambda img: tf.image.resize_images(img, [200, 300])).map(lambda img: (tf.image.per_image_standardization(img), dict())).batch(4)
 
         for out in estimator.predict(eval_input_fn):
-            decoded = DataEncoder().decode(out['boxes'], np.array([300, 200]))
             img = Image.open(f"test/{n}.png")
             draw = ImageDraw.Draw(img)
-            for box in decoded:
-                draw.rectangle(list(box), outline='red')
+            for box in out['boxes']:
+                draw.rectangle(list(box[1:]), outline='red')
             img.show()
             print(out)
     else:
