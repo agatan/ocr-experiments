@@ -11,6 +11,19 @@ def _charset():
     hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
     return alphas + digits + hiras
 
+CHARSET = _charset()
+CHAR2IDX = {c: i + 1 for i, c in enumerate(CHARSET)}
+
+def char2idx(c):
+    return CHAR2IDX[c]
+
+def text2idx(text: str):
+    return np.array([char2idx(c) for c in text])
+
+def idx2char(i):
+    if i == 0:
+        return '<UNK>'
+    return CHARSET[i - 1]
 
 def random_fontname():
     fonts = list(glob.glob("/Users/naomichi/Library/Fonts/*.ttf"))

@@ -8,6 +8,7 @@ import math
 import tensorflow as tf
 import numpy as np
 from icecream import ic
+import datagen
 
 
 # In[2]:
@@ -166,6 +167,7 @@ def generator(root: str, encoder: DataEncoder):
                 img = img.convert('RGB')
             img = np.array(img)
             loc_targets = encoder.encode(bbs, input_size)
+            ts = [datagen.text2idx(t) for t in ts]
             yield img, loc_targets, bbs, ts
     return g
 
@@ -192,20 +194,51 @@ def test():
 
 # In[3]:
 
+_GROUP_NORMALIZATION_COUNT = 0
+
+def group_normalization(x, G=32, eps=1e-5):
+    global _GROUP_NORMALIZATION_COUNT
+    with tf.variable_scope(f'group_normalization_{_GROUP_NORMALIZATION_COUNT}'):
+        base_shape = x.shape
+        _GROUP_NORMALIZATION_COUNT += 1
+        x = tf.transpose(x, [0, 3, 1, 2])
+        _, C, _, _ = x.get_shape().as_list() # C is static, but H, W, B is dynamic
+        shape = tf.shape(x)
+        # C = shape[1]
+        H = shape[2]
+        W = shape[3]
+        G = tf.minimum(G, C)
+        x = tf.reshape(x, tf.stack([-1, G, C // G, H, W]))
+        mean, var = tf.nn.moments(x, [2, 3, 4], keep_dims=True)
+        x = (x - mean) / tf.sqrt(var + eps)
+        # per channel gamma and beta
+        gamma = tf.get_variable('gamma', [C],
+                                initializer=tf.constant_initializer(1.0))
+        beta = tf.get_variable('beta', [C],
+                               initializer=tf.constant_initializer(0.0))
+        gamma = tf.reshape(gamma, [1, C, 1, 1])
+        beta = tf.reshape(beta, [1, C, 1, 1])
+
+        output = tf.reshape(x, [-1, C, H, W]) * gamma + beta
+        # tranpose: [bs, c, h, w, c] to [bs, h, w, c] following the paper
+        output = tf.transpose(output, [0, 2, 3, 1])
+        output.set_shape(base_shape)
+        return output
+
 
 def bottleneck(inputs: tf.Tensor, planes, strides=1, training=False):
     in_places = inputs.shape[-1]
     x = tf.layers.conv2d(inputs, planes, kernel_size=1, use_bias=False)
-    x = tf.layers.batch_normalization(x, training=training)
+    x = group_normalization(x)
     x = tf.nn.relu(x)
     x = tf.layers.conv2d(x, planes, kernel_size=3, strides=strides, padding='same', use_bias=False)
-    x = tf.layers.batch_normalization(x, training=training)
+    x = group_normalization(x)
     x = tf.nn.relu(x)
     x = tf.layers.conv2d(x, 2 * planes, kernel_size=1, use_bias=False)
-    x = tf.layers.batch_normalization(x, training=training)
+    x = group_normalization(x)
     if strides != 1 or inputs.shape[-1] != x.shape[-1]:
         y = tf.layers.conv2d(inputs, x.shape[-1], kernel_size=1, strides=strides, use_bias=False)
-        y = tf.layers.batch_normalization(y, training=training)
+        y = group_normalization(y)
         x += y
     return tf.nn.relu(x)
 
@@ -218,7 +251,7 @@ def feature_extract(inputs: tf.Tensor, training=False):
         inputs = tf.identity(inputs, "inputs")
         x = tf.layers.conv2d(inputs, 64, kernel_size=3, strides=1, padding='same', use_bias=False)
 
-    x = tf.layers.batch_normalization(x, training=training)
+    x = group_normalization(x)
     c1 = tf.layers.max_pooling2d(tf.nn.relu(x), pool_size=3, strides=2, padding='same')
     c2 = bottleneck(c1, 64, strides=1, training=training)
     c3 = bottleneck(c2, 128, strides=2, training=training)
@@ -242,7 +275,7 @@ def ocr_head(features: tf.Tensor, training=False):
     '''
     def block(x, channels):
         x = tf.layers.conv2d(x, channels, kernel_size=3, strides=1, padding='same')
-        x = tf.nn.relu(tf.layers.batch_normalization(x, training=training))
+        x = tf.nn.relu(group_normalization(x))
         x = tf.layers.max_pooling2d(x, (2, 1), strides=(2, 1))
         return x
 
@@ -252,7 +285,7 @@ def ocr_head(features: tf.Tensor, training=False):
         x = features
         for c in [128, 256, len(datagen._charset()) + 1]:
             x = block(x, c)
-        return x
+        return tf.squeeze(x, axis=1)
 
 # In[28]:
 
@@ -285,16 +318,84 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
     return loss
 
 
+def roi_pooling(image: tf.Tensor, boxes: tf.Tensor, height):
+    base_widths = boxes[:, 2] - boxes[:, 0]
+    base_heights = boxes[:, 3] - boxes[:, 1]
+    aspects = base_widths / base_heights
+    widths = tf.ceil(aspects * float(height))
+    max_width = tf.cast(tf.reduce_max(widths), dtype=tf.int32)
+
+    def mapper(box):
+        base_width = box[2] - box[0]
+        base_height = box[3] - box[1]
+        aspect = base_width / base_height
+        width = tf.ceil(aspect * float(height))
+        map_w = base_width / (width - 1)
+        map_h = base_height / (height - 1)
+        xx = tf.range(0, width, dtype=tf.float32) * map_w + box[0]
+        yy = tf.range(0, height, dtype=tf.float32) * map_h + box[1]
+        pooled = bilinear_interpolate(image, xx, yy)
+        padded = tf.pad(
+            pooled, [[0, 0], [0, max_width - tf.cast(width, tf.int32)], [0, 0]])
+        return padded
+
+    results = tf.map_fn(mapper, boxes)
+    lengths = tf.cast(widths, tf.int32)
+    results.set_shape([None, height, None, image.shape[-1]])
+    return results, lengths
+
+
+def bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
+    '''
+    Args:
+        img: [H, W, C]
+        x: [-1]
+        y: [-1]
+    '''
+    def to_f(t):
+        return tf.cast(t, dtype=tf.float32)
+
+    x0 = tf.cast(tf.floor(x), dtype=tf.int32)
+    x1 = x0 + 1
+    y0 = tf.cast(tf.floor(y), dtype=tf.int32)
+    y1 = y0 + 1
+
+    x0 = tf.clip_by_value(x0, 0, tf.shape(img)[1] - 1)
+    x1 = tf.clip_by_value(x1, 0, tf.shape(img)[1] - 1)
+    y0 = tf.clip_by_value(y0, 0, tf.shape(img)[0] - 1)
+    y1 = tf.clip_by_value(y1, 0, tf.shape(img)[0] - 1)
+
+    img_a = tf.gather(tf.gather(img, x0, axis=1), y0, axis=0)
+    img_b = tf.gather(tf.gather(img, x1, axis=1), y0, axis=0)
+    img_c = tf.gather(tf.gather(img, x0, axis=1), y1, axis=0)
+    img_d = tf.gather(tf.gather(img, x1, axis=1), y1, axis=0)
+
+    def meshgrid_distance(x_distance, y_distance):
+        x, y = tf.meshgrid(x_distance, y_distance)
+        return x * y
+
+    wa = meshgrid_distance(to_f(x1) - x, to_f(y1) - y)
+    wb = meshgrid_distance(to_f(x1) - x, y - to_f(y0))
+    wc = meshgrid_distance(x - to_f(x0), to_f(y1) - y)
+    wd = meshgrid_distance(x - to_f(x0), y - to_f(y0))
+    wa = tf.expand_dims(wa, 2)
+    wb = tf.expand_dims(wb, 2)
+    wc = tf.expand_dims(wc, 2)
+    wd = tf.expand_dims(wd, 2)
+
+    flatten_interporated = img_a * wa + img_b * wb + img_c * wc + img_d * wd
+    return flatten_interporated
+
 # In[30]:
 
 def model_fn(features, labels, mode):
     training = mode == tf.estimator.ModeKeys.TRAIN
     fm = feature_extract(features, training=training)
     loc_preds = position_prediction_head(fm)
+
     if mode == tf.estimator.ModeKeys.PREDICT:
         encoder = DataEncoder()
         boxes = encoder.reconstruct_bounding_boxes(loc_preds)
-        ic(boxes)
         def nms_fn(boxes):
             indices = tf.image.non_max_suppression(boxes[:, 1:], boxes[:, 0], 64)
             return tf.gather(boxes, indices)
@@ -304,22 +405,38 @@ def model_fn(features, labels, mode):
 
     with tf.name_scope("myloss"):
         loss = loss_positions(loc_preds, labels['box'])
+
+    bbs = labels['bbs']
+    texts = labels['texts']
+    def mapper(i):
+        feature, boxes, targets = fm[i], bbs[i], texts[i]
+        pooled, lengths = roi_pooling(feature, boxes, 8)
+        ocr_results = tf.nn.softmax(ocr_head(pooled))
+        targets = tf.one_hot(targets, depth=len(datagen.CHARSET), axis=1)
+        indices = tf.where(tf.not_equal(targets, 0))
+        values = tf.gather_nd(targets, indices)
+        targets = tf.SparseTensor(indices, values, tf.shape(targets, out_type=tf.int64))
+        loss = tf.reduce_mean(tf.nn.ctc_loss(tf.cast(targets, dtype=tf.int32), ocr_results, lengths))
+        return loss
+
+    loss_mean = tf.reduce_sum(tf.map_fn(mapper, tf.range(tf.shape(fm)[0]), dtype=tf.float32))
+    loss = loss_mean
+
     if mode == tf.estimator.ModeKeys.EVAL:
         return tf.estimator.EstimatorSpec(mode, loss=loss, eval_metric_ops=dict())
 
     optimizer = tf.train.AdamOptimizer()
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    with tf.control_dependencies(update_ops):
-        train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
+    train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
     return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
 def input_fn(root):
     g = generator(root, DataEncoder())
-    dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.string))
-    def mapper(img, locs, bbs, texts):
-        return (img, dict(box=locs, bbs=bbs, texts=texts))
+    dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.int32))
     dataset = dataset.map(lambda img, locs, bbs, texts: (tf.image.per_image_standardization(img), locs, bbs, texts))
     dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None]))
+    def mapper(img, locs, bbs, texts):
+        return (img, dict(box=locs, bbs=bbs, texts=texts))
     dataset = dataset.map(mapper)
 
     return dataset
