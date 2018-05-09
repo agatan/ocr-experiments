@@ -8,7 +8,7 @@ RUN apt-get -qq update -y \
  && add-apt-repository -y ppa:deadsnakes/ppa \
  && apt-get -qq update -y \
  && echo "Install python3.6 and some libraries..." \
- && apt-get -qq install -y wget bzip2 python3.6 python3.6-dev build-essential libsm6 libxrender1 libxext6 \
+ && apt-get -qq install -y wget bzip2 python3.6 python3.6-dev build-essential libsm6 libxrender1 libxext6 git \
  && echo "Install pip..." \
  && cd /tmp \
  && wget https://bootstrap.pypa.io/get-pip.py \
