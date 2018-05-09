@@ -2,6 +2,5 @@ numpy==1.14.2
 Pillow==5.1.0
 PyYAML==3.12
 six==1.11.0
-torch==0.4.0
 torchvision==0.2.1
 git+https://github.com/t-vi/warp-ctc#subdirectory=pytorch_binding
