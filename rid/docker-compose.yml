@@ -1,0 +1,22 @@
+version: '2.1'
+
+services:
+  app:
+    build: .
+    volumes:
+      - ..:/app
+      - ~/.ssh:/host_ssh:ro
+    volumes_from:
+      - volume
+    ports:
+      - 8888:8888
+    extra_hosts:
+      localhost: "${DOCKER_HOST_IP}"
+    environment:
+      USER: "${USER}"
+    command: tail -f /dev/null
+  volume:
+    image: alpine:latest
+    volumes:
+      - /app/.venv
+    command: tail -f /dev/null
