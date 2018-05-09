@@ -1,2 +1,3 @@
 -r requirements.txt
 torch==0.4.0
+git+https://github.com/t-vi/warp-ctc#subdirectory=pytorch_binding
