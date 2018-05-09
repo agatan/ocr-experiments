@@ -101,3 +101,4 @@ train/
 test/
 *.jpg
 *.pth
+*.tar.gz
