@@ -5,7 +5,7 @@ else
 endif
 
 .PHONY: dep
-dep: requirements.txt $(PLATFORM_SPECIFIED_REQUIREMENTS) requirements-ext.txt
+dep: $(PLATFORM_SPECIFIED_REQUIREMENTS) requirements.txt requirements-ext.txt
 	pip install --user -r $(PLATFORM_SPECIFIED_REQUIREMENTS)
 	pip install --user -r requirements.txt
 	pip install --user -r requirements-ext.txt

@@ -3,3 +3,5 @@ Pillow==5.1.0
 PyYAML==3.12
 six==1.11.0
 torchvision==0.2.1
+git+https://github.com/pytorch/ignite
+visdom==0.1.7
