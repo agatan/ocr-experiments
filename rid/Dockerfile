@@ -17,11 +17,7 @@ RUN apt-get -qq update -y \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir /usr/local/lib/python3.6/site-packages \
- && echo '/app/vendor' > /usr/local/lib/python3.6/site-packages/custom.pth \
- && echo '/app/vendor' > /usr/local/lib/python3.6/dist-packages/custom.pth
-
-ENV PATH=/app/vendor/bin:$PATH
+ENV PATH=/root/.local/bin:$PATH
 
 WORKDIR /app
 
