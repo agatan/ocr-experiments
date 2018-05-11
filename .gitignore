@@ -102,3 +102,4 @@ test/
 *.jpg
 *.pth
 *.tar.gz
+vendor/
