@@ -1,8 +1,9 @@
-version: '2.1'
+version: '2.3'
 
 services:
   app:
     build: .
+    runtime: nvidia
     volumes:
       - ..:/app
       - ~/.ssh:/host_ssh:ro
