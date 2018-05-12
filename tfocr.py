@@ -149,15 +149,16 @@ def generator(root: str, encoder: DataEncoder):
         with open(f, 'r') as fp:
             info = json.load(fp)
         fnames.append(info['file'])
-        bbs = []
-        ts = []
-        for b in info['boxes']:
+        bbs = np.zeros((20, 4))
+        ts = np.zeros((20, 100))
+        for j, b in enumerate(info['boxes']):
             xmin = float(b['left'])
             ymin = float(b['top'])
             xmax = xmin + float(b['width'])
             ymax = ymin + float(b['height'])
-            bbs.append([xmin, ymin, xmax, ymax])
-            ts.append(bytes(b['text'], 'utf8'))
+            bbs[j] = [xmin, ymin, xmax, ymax]
+            text = datagen.text2idx(b['text'])
+            ts[j, :len(text)] = text
         boxes.append(np.array(bbs))
         texts.append(np.array(ts))
     def g():
@@ -167,7 +168,6 @@ def generator(root: str, encoder: DataEncoder):
                 img = img.convert('RGB')
             img = np.array(img)
             loc_targets = encoder.encode(bbs, input_size)
-            ts = [datagen.text2idx(t) for t in ts]
             yield img, loc_targets, bbs, ts
     return g
 
@@ -431,6 +431,7 @@ def model_fn(features, labels, mode):
     return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
 def input_fn(root):
+    ic('input_fn')
     g = generator(root, DataEncoder())
     dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.int32))
     dataset = dataset.map(lambda img, locs, bbs, texts: (tf.image.per_image_standardization(img), locs, bbs, texts))
