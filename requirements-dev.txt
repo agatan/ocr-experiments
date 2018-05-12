@@ -1,0 +1,4 @@
+ipython
+icecream
+jupyter
+ipdb

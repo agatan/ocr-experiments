@@ -1,0 +1,23 @@
+version: '2.3'
+
+services:
+  app:
+    build: .
+    runtime: nvidia
+    volumes:
+      - ..:/app
+      - ~/.ssh:/host_ssh:ro
+    volumes_from:
+      - volume
+    ports:
+      - 8888:8888
+    extra_hosts:
+      localhost: "${DOCKER_HOST_IP}"
+    environment:
+      USER: "${USER}"
+    command: tail -f /dev/null
+  volume:
+    image: alpine:latest
+    volumes:
+      - /root/.local
+    command: tail -f /dev/null
