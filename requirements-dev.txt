@@ -2,3 +2,8 @@ ipython
 icecream
 jupyter
 ipdb
+jupyter-tensorboard
+jedi
+mypy
+autopep8
+flake8
