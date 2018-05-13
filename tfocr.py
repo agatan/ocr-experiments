@@ -326,18 +326,22 @@ def roi_pooling(image: tf.Tensor, boxes: tf.Tensor, height):
     max_width = tf.cast(tf.reduce_max(widths), dtype=tf.int32)
 
     def mapper(box):
-        base_width = box[2] - box[0]
-        base_height = box[3] - box[1]
-        aspect = base_width / base_height
-        width = tf.ceil(aspect * float(height))
-        map_w = base_width / (width - 1)
-        map_h = base_height / (height - 1)
-        xx = tf.range(0, width, dtype=tf.float32) * map_w + box[0]
-        yy = tf.range(0, height, dtype=tf.float32) * map_h + box[1]
-        pooled = bilinear_interpolate(image, xx, yy)
-        padded = tf.pad(
-            pooled, [[0, 0], [0, max_width - tf.cast(width, tf.int32)], [0, 0]])
-        return padded
+        cond = tf.reduce_any(tf.not_equal(box, 0))
+        def then_branch():
+            base_width = box[2] - box[0]
+            base_height = box[3] - box[1]
+            aspect = base_width / base_height
+            width = tf.ceil(aspect * float(height))
+            map_w = base_width / (width - 1)
+            map_h = base_height / (height - 1)
+            xx = tf.range(0, width, dtype=tf.float32) * map_w + box[0]
+            yy = tf.range(0, height, dtype=tf.float32) * map_h + box[1]
+            pooled = bilinear_interpolate(image, xx, yy)
+            return tf.pad(
+                pooled, [[0, 0], [0, max_width - tf.cast(width, tf.int32)], [0, 0]])
+        def else_branch():
+            return tf.zeros((height, max_width, tf.shape(image)[-1]))
+        return tf.cond(cond, then_branch, else_branch)
 
     results = tf.map_fn(mapper, boxes)
     lengths = tf.cast(widths, tf.int32)
@@ -435,7 +439,7 @@ def input_fn(root):
     g = generator(root, DataEncoder())
     dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.int32))
     dataset = dataset.map(lambda img, locs, bbs, texts: (tf.image.per_image_standardization(img), locs, bbs, texts))
-    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None]))
+    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None, 100]))
     def mapper(img, locs, bbs, texts):
         return (img, dict(box=locs, bbs=bbs, texts=texts))
     dataset = dataset.map(mapper)
@@ -445,10 +449,15 @@ def input_fn(root):
 def main():
     from tensorflow.python import debug as tf_debug
 
+    # tf.enable_eager_execution()
+    # for x in input_fn('train'):
+    #     ic(x)
+    #     import sys; sys.exit(0)
+
     # Create a LocalCLIDebugHook and use it as a monitor when calling fit().
-    # hooks = [tf_debug.LocalCLIDebugHook()]
-    # hooks = [tf_debug.TensorBoardDebugHook("localhost:2333")]
     hooks = []
+    # hooks = [tf_debug.LocalCLIDebugHook()]
+    hooks = [tf_debug.TensorBoardDebugHook("localhost:2333")]
     config = tf.estimator.RunConfig(
         model_dir='/tmp/checkpoint',
         save_checkpoints_secs=10,
