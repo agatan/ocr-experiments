@@ -77,6 +77,12 @@ class DataEncoder():
         Returns:
         loc_targets: np.ndarray [FH, FW, #anchor * [confidence, xcenter, ycenter, width, height]]
         '''
+        new_boxes = []
+        for points in boxes:
+            if np.all(points == 0):
+                break
+            new_boxes.append(points)
+        boxes = np.array(new_boxes)
         fm_size = [math.ceil(i / pow(2, 2)) for i in input_size]
         anchor_boxes = self._get_anchor_boxes(input_size)
         ious = box_iou(xywh2xyxy(anchor_boxes), boxes)
