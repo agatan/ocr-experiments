@@ -418,6 +418,10 @@ def model_fn(features, labels, mode):
     lengths = labels['lengths']
     def mapper(i):
         feature, boxes, targets, lens = fm[i], bbs[i], texts[i], lengths[i]
+        indices = tf.where(tf.not_equal(lens, 0))
+        boxes = tf.gather_nd(boxes, indices)
+        targets = tf.gather_nd(targets, indices)
+        lens = tf.gather_nd(lens, indices)
         pooled = roi_pooling(feature, boxes, 8)
         ocr_results = tf.nn.softmax(ocr_head(pooled))
         indices = tf.where(tf.not_equal(targets, 0))
@@ -438,7 +442,6 @@ def model_fn(features, labels, mode):
     return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
 def input_fn(root):
-    ic('input_fn')
     g = generator(root, DataEncoder())
     dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.int32, tf.int32))
     dataset = dataset.map(lambda img, locs, bbs, texts, lengths: (tf.image.per_image_standardization(img), locs, bbs, texts, lengths))
