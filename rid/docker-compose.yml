@@ -11,6 +11,8 @@ services:
       - volume
     ports:
       - 8888:8888
+      - 6006:6006
+      - 2333:2333
     extra_hosts:
       localhost: "${DOCKER_HOST_IP}"
     environment:
