@@ -420,7 +420,6 @@ def model_fn(features, labels, mode):
         feature, boxes, targets, lens = fm[i], bbs[i], texts[i], lengths[i]
         pooled = roi_pooling(feature, boxes, 8)
         ocr_results = tf.nn.softmax(ocr_head(pooled))
-        targets = tf.one_hot(targets, depth=len(datagen.CHARSET), axis=1)
         indices = tf.where(tf.not_equal(targets, 0))
         values = tf.gather_nd(targets, indices)
         targets = tf.SparseTensor(indices, values, tf.shape(targets, out_type=tf.int64))
