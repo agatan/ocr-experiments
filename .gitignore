@@ -103,3 +103,5 @@ test/
 *.pth
 *.tar.gz
 vendor/
+data/
+checkpoint/
