@@ -223,11 +223,15 @@ def feature_extract(inputs):
     return p3
 
 
+def position_predict(feature_map):
+    return tf.keras.layers.Conv2D(9 * 5, kernel_size=1, strides=1)(feature_map)
+
+
 def main():
     inputs = tf.keras.Input(shape=(192, 304, 3))
-    outputs = feature_extract(inputs)
-    ic(inputs, outputs)
-    model = tf.keras.Model(inputs, outputs)
+    feature_map = feature_extract(inputs)
+    position = position_predict(feature_map)
+    model = tf.keras.Model(inputs, [feature_map, position])
     model.summary()
 
 
