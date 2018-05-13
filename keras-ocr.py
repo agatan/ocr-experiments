@@ -7,8 +7,8 @@ from group_norm import GroupNormalization
 from icecream import ic
 
 
-INPUT_SIZE = np.array([300, 200])
-FEATURE_SIZE = np.array([75, 50])
+INPUT_SIZE = np.array([304, 192])
+FEATURE_SIZE = np.array([76, 48])
 
 
 def meshgrid(x, y):
@@ -136,7 +136,7 @@ def generator(root: str, encoder: DataEncoder):
     import os
     import json
     from PIL import Image
-    input_size = np.array([300, 200])
+    input_size = INPUT_SIZE
     fnames = []
     boxes = []
     texts = []
@@ -170,36 +170,31 @@ def generator(root: str, encoder: DataEncoder):
             img = Image.open(os.path.join(root, fname))
             if img.mode != 'RGB':
                 img = img.convert('RGB')
+            img = img.resize((304, 192))
             img = np.array(img)
             loc_targets = encoder.encode(bbs, input_size)
             yield img, loc_targets, bbs, ts, lens
     return g
 
 
-class _Bottleneck(tf.keras.Model):
-    def __init__(self, channels, strides):
-        super().__init__()
-        self.convs = tf.keras.Sequential([
-            tf.keras.layers.Conv2D(channels, kernel_size=1, use_bias=False),
-            GroupNormalization(channels // 4),
-            tf.keras.layers.Activation(tf.keras.activations.relu),
-            tf.keras.layers.Conv2D(channels, kernel_size=3, strides=strides, use_bias=False, padding='same'),
-            GroupNormalization(channels // 4),
-            tf.keras.layers.Activation(tf.keras.activations.relu),
-            tf.keras.layers.Conv2D(2 * channels, kernel_size=1, use_bias=False),
-            GroupNormalization(channels // 4),
-        ])
-        self.residual = tf.keras.Sequential([
+def _bottleneck(inputs, channels, strides):
+    x = tf.keras.Sequential([
+        tf.keras.layers.Conv2D(channels, kernel_size=1, use_bias=False),
+        GroupNormalization(channels // 4),
+        tf.keras.layers.Activation(tf.keras.activations.relu),
+        tf.keras.layers.Conv2D(channels, kernel_size=3, strides=strides, use_bias=False, padding='same'),
+        GroupNormalization(channels // 4),
+        tf.keras.layers.Activation(tf.keras.activations.relu),
+        tf.keras.layers.Conv2D(2 * channels, kernel_size=1, use_bias=False),
+        GroupNormalization(channels // 4),
+    ])(inputs)
+    if strides != 1 or inputs.shape[-1] != x.shape[-1]:
+        res = tf.keras.Sequential([
             tf.keras.layers.Conv2D(2 * channels, kernel_size=1, strides=strides, use_bias=False),
             GroupNormalization(channels // 4),
-        ])
-        self.strides = strides
-
-    def call(self, inputs):
-        x = self.convs(inputs)
-        if self.strides != 1 or inputs.shape[-1] != x.shape[-1]:
-            x += self.residual(inputs)
-        return tf.keras.activations.relu(x)
+        ])(inputs)
+        x = tf.keras.layers.Add()([x, res])
+    return tf.keras.layers.Activation(tf.keras.activations.relu)(x)
 
 
 def feature_extract(inputs):
@@ -209,10 +204,10 @@ def feature_extract(inputs):
         tf.keras.layers.Activation(tf.keras.activations.relu),
         tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same'),
     ])(inputs)
-    c2 = _Bottleneck(64, strides=1)(c1)
-    c3 = _Bottleneck(128, strides=2)(c2)
-    c4 = _Bottleneck(256, strides=2)(c3)
-    c5 = _Bottleneck(512, strides=2)(c4)
+    c2 = _bottleneck(c1, 64, strides=1)
+    c3 = _bottleneck(c2, 128, strides=2)
+    c4 = _bottleneck(c3, 256, strides=2)
+    c5 = _bottleneck(c4, 512, strides=2)
     p5 = tf.keras.layers.Conv2D(256, kernel_size=1, strides=1)(c5)
     x = tf.keras.layers.Conv2D(256, kernel_size=1, strides=1)(c4)
     p4 = tf.keras.layers.Add()([tf.keras.layers.UpSampling2D(size=(2, 2))(p5), x])
@@ -227,12 +222,63 @@ def position_predict(feature_map):
     return tf.keras.layers.Conv2D(9 * 5, kernel_size=1, strides=1)(feature_map)
 
 
+def weighted_binary_cross_entropy(output, target, weights):
+    loss = weights[1] * (target * tf.log(output + 1e-8)) + weights[0] * ((1 - target) * tf.log(1 - output + 1e-8))
+    return tf.negative(tf.reduce_mean(loss))
+
+
+def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
+    '''
+    Args:
+        loc_preds: [#batch, h, w, (#anchor * [p, x, y, w, h])]
+        loc_targets: [#batch, h, w, (#anchor * [p, x, y, w, h])]
+    '''
+    loc_preds = tf.reshape(loc_preds, (-1, 5))
+    loc_targets = tf.reshape(loc_targets, (-1, 5))
+    conf_preds = tf.sigmoid(loc_preds[..., 0])
+    conf_targets = loc_targets[..., 0]
+    mask = conf_targets > 0.9
+
+    xy_preds = tf.sigmoid(loc_preds[..., 1:3])
+    wh_preds = loc_preds[..., 3:5]
+    loc_preds = tf.concat([xy_preds, wh_preds], axis=1)
+    loc_targets = loc_targets[..., 1:]
+
+    loss_conf = weighted_binary_cross_entropy(conf_preds, conf_targets, weights=[1, 10])
+    loss_loc = tf.reduce_sum(tf.losses.mean_squared_error(loc_targets, loc_preds, reduction=tf.losses.Reduction.NONE), axis=1)
+    loss_loc_mean = tf.reduce_sum(loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
+    tf.summary.scalar('loss_conf', loss_conf)
+    tf.summary.scalar('loss_location', loss_loc_mean)
+    loss = loss_conf + 5 * loss_loc_mean
+    return loss
+
+
 def main():
+    tf.enable_eager_execution()
+    # return
+
+    dataset = tf.data.Dataset.from_generator(generator('data/test', DataEncoder()), (tf.float32, tf.float32, tf.float32, tf.int32, tf.int32))
+    dataset = dataset.map(lambda img, locs, bbs, texts, lengths: (tf.image.per_image_standardization(img), locs, bbs, texts, lengths))
+    dataset = dataset.padded_batch(8, padded_shapes=([192, 304, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None, 100], [None]))
+    def mapper(img, locs, bbs, texts, lengths):
+        return (img, dict(box=locs, bbs=bbs, texts=texts, lengths=lengths))
+    dataset = dataset.map(mapper)
+
+    ic(next(iter(dataset)))
     inputs = tf.keras.Input(shape=(192, 304, 3))
     feature_map = feature_extract(inputs)
     position = position_predict(feature_map)
-    model = tf.keras.Model(inputs, [feature_map, position])
+    model = tf.keras.Model(inputs, position)
+    optim = tf.train.AdamOptimizer()
+    callback = tf.keras.callbacks.ModelCheckpoint("checkpoint")
+    callback.set_model(model)
+    model.compile(optimizer=optim, loss=loss_positions)
+    model.fit_generator(dataset, callbacks=[callback])
     model.summary()
+    print('Done')
+    for (images, labels) in dataset:
+        model.train_on_batch(images, labels['box'], call)
+    print(model)
 
 
 if __name__ == '__main__':
