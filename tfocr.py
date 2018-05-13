@@ -198,13 +198,9 @@ def test():
 
 # In[3]:
 
-_GROUP_NORMALIZATION_COUNT = 0
-
-def group_normalization(x, G=32, eps=1e-5):
-    global _GROUP_NORMALIZATION_COUNT
-    with tf.variable_scope(f'group_normalization_{_GROUP_NORMALIZATION_COUNT}'):
+def group_normalization(x, G=8, eps=1e-5):
+    with tf.variable_scope(None, default_name='group_normalization'):
         base_shape = x.shape
-        _GROUP_NORMALIZATION_COUNT += 1
         x = tf.transpose(x, [0, 3, 1, 2])
         _, C, _, _ = x.get_shape().as_list() # C is static, but H, W, B is dynamic
         shape = tf.shape(x)
@@ -287,8 +283,10 @@ def ocr_head(features: tf.Tensor, training=False):
 
     with tf.name_scope("ocr"):
         x = features
-        for c in [128, 256, len(datagen._charset()) + 1]:
+        for c in [128, 256, 512]:
             x = block(x, c)
+        x = tf.layers.conv2d(x, len(datagen.CHAR2IDX) + 2, kernel_size=3, strides=1, padding='same')
+        x = tf.nn.softmax(x)
         return tf.squeeze(x, axis=1)
 
 # In[28]:
@@ -445,7 +443,7 @@ def input_fn(root):
     g = generator(root, DataEncoder())
     dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.int32, tf.int32))
     dataset = dataset.map(lambda img, locs, bbs, texts, lengths: (tf.image.per_image_standardization(img), locs, bbs, texts, lengths))
-    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None, 100], [None]))
+    dataset = dataset.padded_batch(8, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None, 100], [None]))
     def mapper(img, locs, bbs, texts, lengths):
         return (img, dict(box=locs, bbs=bbs, texts=texts, lengths=lengths))
     dataset = dataset.map(mapper)
@@ -463,9 +461,9 @@ def main():
     # Create a LocalCLIDebugHook and use it as a monitor when calling fit().
     hooks = []
     # hooks = [tf_debug.LocalCLIDebugHook()]
-    hooks = [tf_debug.TensorBoardDebugHook("localhost:2333")]
+    # hooks = [tf_debug.TensorBoardDebugHook("localhost:2333")]
     config = tf.estimator.RunConfig(
-        model_dir='/tmp/checkpoint',
+        model_dir='checkpoint',
         save_checkpoints_secs=10,
     )
     estimator = tf.estimator.Estimator(model_fn=model_fn, config=config)
@@ -495,6 +493,7 @@ def main():
         for epoch in range(100):
             print(f'Epoch {epoch + 1}:')
             estimator.train(train_input_fn, hooks=hooks)
+            print("DONE")
             estimator.evaluate(test_input_fn, hooks=hooks)
 
 main()
