@@ -316,6 +316,8 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
     loss_conf = weighted_binary_cross_entropy(conf_preds, conf_targets, weights=[1, 10])
     loss_loc = tf.reduce_sum(tf.losses.mean_squared_error(loc_targets, loc_preds, reduction=tf.losses.Reduction.NONE), axis=1)
     loss_loc_mean = tf.reduce_sum(loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
+    tf.summary.scalar('loss_conf', loss_conf)
+    tf.summary.scalar('loss_location', loss_loc_mean)
     loss = loss_conf + 5 * loss_loc_mean
     return loss
 
@@ -409,7 +411,7 @@ def model_fn(features, labels, mode):
         return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
     with tf.name_scope("myloss"):
-        loss = loss_positions(loc_preds, labels['box'])
+        loss_pos = loss_positions(loc_preds, labels['box'])
 
     bbs = labels['bbs']
     texts = labels['texts']
@@ -425,11 +427,13 @@ def model_fn(features, labels, mode):
         indices = tf.where(tf.not_equal(targets, 0))
         values = tf.gather_nd(targets, indices)
         targets = tf.SparseTensor(indices, values, tf.shape(targets, out_type=tf.int64))
-        loss = tf.reduce_mean(tf.nn.ctc_loss(tf.cast(targets, dtype=tf.int32), ocr_results, lens, time_major=False))
+        loss = tf.reduce_sum(tf.nn.ctc_loss(tf.cast(targets, dtype=tf.int32), ocr_results, lens, time_major=False))
         return loss
 
-    loss_mean = tf.reduce_sum(tf.map_fn(mapper, tf.range(tf.shape(fm)[0]), dtype=tf.float32))
-    loss = loss_mean
+    loss_ocr = tf.reduce_sum(tf.map_fn(mapper, tf.range(tf.shape(fm)[0]), dtype=tf.float32))
+    loss = loss_ocr + loss_pos
+    tf.summary.scalar('loss_pos', loss_pos)
+    tf.summary.scalar('loss_ocr', loss_ocr)
 
     if mode == tf.estimator.ModeKeys.EVAL:
         return tf.estimator.EstimatorSpec(mode, loss=loss, eval_metric_ops=dict())
@@ -474,12 +478,12 @@ def main():
     def test_input_fn():
         return input_fn('test')
 
-    EVAL = False
+    EVAL = True
     if EVAL:
         from PIL import Image, ImageDraw
-        n = np.random.randint(0, 99)
+        n = np.random.randint(0, 10)
         def eval_input_fn():
-            filenames = tf.constant([f'test/{n}.png' for n in range(0, 10)])
+            filenames = tf.constant([f'test/{n}.png'])
             return tf.data.Dataset.from_tensor_slices(filenames).map(lambda f: tf.image.decode_png(tf.read_file(f), channels=3)).map(lambda img: tf.image.resize_images(img, [200, 300])).map(lambda img: (tf.image.per_image_standardization(img), dict())).batch(4)
 
         for out in estimator.predict(eval_input_fn):
@@ -488,6 +492,7 @@ def main():
             for box in out['boxes']:
                 draw.rectangle(list(box[1:]), outline='red')
             img.show()
+            img.save("foo.png")
             print(out)
     else:
         for epoch in range(100):
