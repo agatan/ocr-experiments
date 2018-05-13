@@ -140,6 +140,7 @@ def generator(root: str, encoder: DataEncoder):
     fnames = []
     boxes = []
     texts = []
+    lengths = []
     i = 0
     while True:
         f = os.path.join(root, f'{i}.json')
@@ -150,7 +151,8 @@ def generator(root: str, encoder: DataEncoder):
             info = json.load(fp)
         fnames.append(info['file'])
         bbs = np.zeros((20, 4))
-        ts = np.zeros((20, 100))
+        ts = np.zeros((20, 100), dtype=np.int32)
+        lens = np.zeros(20, dtype=np.int32)
         for j, b in enumerate(info['boxes']):
             xmin = float(b['left'])
             ymin = float(b['top'])
@@ -159,16 +161,18 @@ def generator(root: str, encoder: DataEncoder):
             bbs[j] = [xmin, ymin, xmax, ymax]
             text = datagen.text2idx(b['text'])
             ts[j, :len(text)] = text
+            lens[j] = len(text)
         boxes.append(np.array(bbs))
         texts.append(np.array(ts))
+        lengths.append(lens)
     def g():
-        for fname, bbs, ts in zip(fnames, boxes, texts):
+        for fname, bbs, ts, lens in zip(fnames, boxes, texts, lengths):
             img = Image.open(os.path.join(root, fname))
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             img = np.array(img)
             loc_targets = encoder.encode(bbs, input_size)
-            yield img, loc_targets, bbs, ts
+            yield img, loc_targets, bbs, ts, lens
     return g
 
 def test():
@@ -344,9 +348,8 @@ def roi_pooling(image: tf.Tensor, boxes: tf.Tensor, height):
         return tf.cond(cond, then_branch, else_branch)
 
     results = tf.map_fn(mapper, boxes)
-    lengths = tf.cast(widths, tf.int32)
     results.set_shape([None, height, None, image.shape[-1]])
-    return results, lengths
+    return results
 
 
 def bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
@@ -412,15 +415,16 @@ def model_fn(features, labels, mode):
 
     bbs = labels['bbs']
     texts = labels['texts']
+    lengths = labels['lengths']
     def mapper(i):
-        feature, boxes, targets = fm[i], bbs[i], texts[i]
-        pooled, lengths = roi_pooling(feature, boxes, 8)
+        feature, boxes, targets, lens = fm[i], bbs[i], texts[i], lengths[i]
+        pooled = roi_pooling(feature, boxes, 8)
         ocr_results = tf.nn.softmax(ocr_head(pooled))
         targets = tf.one_hot(targets, depth=len(datagen.CHARSET), axis=1)
         indices = tf.where(tf.not_equal(targets, 0))
         values = tf.gather_nd(targets, indices)
         targets = tf.SparseTensor(indices, values, tf.shape(targets, out_type=tf.int64))
-        loss = tf.reduce_mean(tf.nn.ctc_loss(tf.cast(targets, dtype=tf.int32), ocr_results, lengths))
+        loss = tf.reduce_mean(tf.nn.ctc_loss(tf.cast(targets, dtype=tf.int32), ocr_results, lens, time_major=False))
         return loss
 
     loss_mean = tf.reduce_sum(tf.map_fn(mapper, tf.range(tf.shape(fm)[0]), dtype=tf.float32))
@@ -437,11 +441,11 @@ def model_fn(features, labels, mode):
 def input_fn(root):
     ic('input_fn')
     g = generator(root, DataEncoder())
-    dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.int32))
-    dataset = dataset.map(lambda img, locs, bbs, texts: (tf.image.per_image_standardization(img), locs, bbs, texts))
-    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None, 100]))
-    def mapper(img, locs, bbs, texts):
-        return (img, dict(box=locs, bbs=bbs, texts=texts))
+    dataset = tf.data.Dataset.from_generator(g, (tf.float32, tf.float32, tf.float32, tf.int32, tf.int32))
+    dataset = dataset.map(lambda img, locs, bbs, texts, lengths: (tf.image.per_image_standardization(img), locs, bbs, texts, lengths))
+    dataset = dataset.padded_batch(1, padded_shapes=([200, 300, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None, 100], [None]))
+    def mapper(img, locs, bbs, texts, lengths):
+        return (img, dict(box=locs, bbs=bbs, texts=texts, lengths=lengths))
     dataset = dataset.map(mapper)
 
     return dataset
