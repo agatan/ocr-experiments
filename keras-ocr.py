@@ -250,7 +250,7 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
     flatten = tf.reshape(
         outputs, (-1, FEATURE_SIZE[0] * FEATURE_SIZE[1] * 9, 5))
     out_xys = flatten[..., 1:3]
-    out_whs = tf.sigmoid(flatten[..., 3:5])
+    out_whs = flatten[..., 3:5]
 
     preds = tf.sigmoid(flatten[..., 0:1])
     xy = out_xys * anchor_boxes[:, 2:] + anchor_boxes[:, :2]
@@ -259,6 +259,8 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
 
     def nms_fn(boxes):
         MAX_BOXES = 64
+        indices = tf.where(boxes[:, 0] > 0.7)
+        boxes = tf.gather_nd(boxes, indices)
         indices = tf.image.non_max_suppression(
             boxes[:, 1:], boxes[:, 0], MAX_BOXES)
         boxes = tf.gather(boxes, indices)
@@ -393,11 +395,11 @@ def weighted_binary_cross_entropy(output, target, weights):
     return tf.negative(tf.reduce_mean(loss))
 
 
-def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
+def loss_positions(loc_targets: tf.Tensor, loc_preds: tf.Tensor):
     '''
     Args:
-        loc_preds: [#batch, h, w, (#anchor * [p, x, y, w, h])]
         loc_targets: [#batch, h, w, (#anchor * [p, x, y, w, h])]
+        loc_preds: [#batch, h, w, (#anchor * [p, x, y, w, h])]
     '''
     loc_preds = tf.reshape(loc_preds, (-1, 5))
     loc_targets = tf.reshape(loc_targets, (-1, 5))
@@ -405,7 +407,7 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
     conf_targets = loc_targets[..., 0]
     mask = conf_targets > 0.9
 
-    xy_preds = tf.sigmoid(loc_preds[..., 1:3])
+    xy_preds = loc_preds[..., 1:3]
     wh_preds = loc_preds[..., 3:5]
     loc_preds = tf.concat([xy_preds, wh_preds], axis=1)
     loc_targets = loc_targets[..., 1:]
@@ -418,7 +420,7 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
         loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
     tf.summary.scalar('loss_conf', loss_conf)
     tf.summary.scalar('loss_location', loss_loc_mean)
-    loss = loss_conf + 5 * loss_loc_mean
+    loss = loss_conf + loss_loc_mean
     return loss
 
 
@@ -432,21 +434,29 @@ def main():
 
     if not args.eval:
         model, prediction_model, ocr_model = create_models(sequence)
-        optim = tf.train.AdamOptimizer()
         callbacks = [
             tf.keras.callbacks.ModelCheckpoint("checkpoint.h5"),
             tf.keras.callbacks.TensorBoard(),
         ]
-        model.compile(optimizer=optim, loss=loss_positions)
+        model.compile(optimizer='adam', loss=loss_positions)
         model.summary()
-        model.fit_generator(sequence, callbacks=callbacks)
+        model.fit_generator(sequence, callbacks=callbacks, epochs=100)
         model.save_weights("weights.h5")
     else:
-        _, prediction_model = create_models(sequence)
+        from PIL import ImageDraw
+
+        _, prediction_model, _ = create_models(sequence)
         prediction_model.load_weights("weights.h5", by_name=True)
         images, _ = sequence[0]
         boxes = prediction_model.predict(images)
-        ic(boxes.shape)
+        img = Image.fromarray(images[1].astype(np.uint8))
+        draw = ImageDraw.Draw(img)
+        for box in boxes[1]:
+            print(box)
+            draw.rectangle(list(box[1:]), outline='red')
+        del draw
+        img.show()
+        img.save('foo.png')
 
 
 if __name__ == '__main__':
