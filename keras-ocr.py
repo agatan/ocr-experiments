@@ -244,7 +244,6 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
     Returns:
         boxes: tensor [#batch, H * W, [preds, x1, y1, x2, y2]]
     '''
-    ic(outputs)
     anchor_boxes = tf.convert_to_tensor(anchor_boxes, dtype=tf.float32)
     flatten = tf.reshape(
         outputs, (-1, FEATURE_SIZE[0] * FEATURE_SIZE[1] * 9, 5))
@@ -259,7 +258,6 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
     def nms_fn(boxes):
         MAX_BOXES = 64
         indices = tf.image.non_max_suppression(boxes[:, 1:], boxes[:, 0], MAX_BOXES)
-        ic(boxes, indices)
         boxes = tf.gather(boxes, indices)
         boxes = tf.pad(boxes, [[0, MAX_BOXES - tf.shape(boxes)[0]], [0, 0]])
         boxes.set_shape([MAX_BOXES, 5])
