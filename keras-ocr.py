@@ -11,7 +11,7 @@ from icecream import ic
 
 
 INPUT_SIZE = np.array([304, 192])
-FEATURE_SIZE = np.array([76, 48])
+FEATURE_SIZE = INPUT_SIZE // 4
 
 
 def meshgrid(x, y):
@@ -166,26 +166,6 @@ class Sequence(tf.keras.utils.Sequence):
         masks = masks.reshape(fm_size[1], fm_size[0], 9, 1)
         return np.concatenate([masks, loc_targets], axis=3).reshape(fm_size[1], fm_size[0], 9 * 5)
 
-    def reconstruct_bounding_boxes(self, outputs):
-        '''
-        Args:
-            outputs: tensor [#batch, H, W, [preds, x, y, w, h]] (x, y in 0..1)
-        Returns:
-            boxes: tensor [#batch, H * W, [preds, x1, y1, x2, y2]]
-        '''
-        anchor_boxes = tf.convert_to_tensor(
-            self._get_anchor_boxes(INPUT_SIZE), dtype=tf.float32)
-        flatten = tf.reshape(
-            outputs, (-1, FEATURE_SIZE[0] * FEATURE_SIZE[1] * 9, 5))
-        out_xys = flatten[..., 1:3]
-        out_whs = tf.sigmoid(flatten[..., 3:5])
-
-        preds = tf.sigmoid(flatten[..., 0:1])
-        xy = out_xys * anchor_boxes[:, 2:] + anchor_boxes[:, :2]
-        wh = tf.exp(out_whs) * anchor_boxes[:, 2:]
-        boxes = tf.concat([preds, xy - wh / 2, xy + wh / 2], axis=2)
-        return boxes
-
     def decode(self, loc_preds, input_size: np.ndarray, conf_thres=0.5):
         anchor_boxes = self._get_anchor_boxes(input_size)
         loc_preds = loc_preds.reshape(-1, 5)
@@ -256,12 +236,47 @@ def position_predict(feature_map):
     return tf.keras.layers.Conv2D(9 * 5, kernel_size=1, strides=1)(feature_map)
 
 
-def create_models():
+def reconstruct_bounding_boxes(anchor_boxes, outputs):
+    '''
+    Args:
+        anchor_boxes: tensor
+        outputs: tensor [#batch, H, W, [preds, x, y, w, h]] (x, y in 0..1)
+    Returns:
+        boxes: tensor [#batch, H * W, [preds, x1, y1, x2, y2]]
+    '''
+    ic(outputs)
+    anchor_boxes = tf.convert_to_tensor(anchor_boxes, dtype=tf.float32)
+    flatten = tf.reshape(
+        outputs, (-1, FEATURE_SIZE[0] * FEATURE_SIZE[1] * 9, 5))
+    out_xys = flatten[..., 1:3]
+    out_whs = tf.sigmoid(flatten[..., 3:5])
+
+    preds = tf.sigmoid(flatten[..., 0:1])
+    xy = out_xys * anchor_boxes[:, 2:] + anchor_boxes[:, :2]
+    wh = tf.exp(out_whs) * anchor_boxes[:, 2:]
+    boxes = tf.concat([preds, xy - wh / 2, xy + wh / 2], axis=2)
+
+    def nms_fn(boxes):
+        MAX_BOXES = 64
+        indices = tf.image.non_max_suppression(boxes[:, 1:], boxes[:, 0], MAX_BOXES)
+        ic(boxes, indices)
+        boxes = tf.gather(boxes, indices)
+        boxes = tf.pad(boxes, [[0, MAX_BOXES - tf.shape(boxes)[0]], [0, 0]])
+        boxes.set_shape([MAX_BOXES, 5])
+        return boxes
+
+    boxes = tf.map_fn(nms_fn, boxes, dtype=tf.float32)
+    return boxes
+
+
+def create_models(sequence):
     inputs = tf.keras.Input(shape=(192, 304, 3))
     feature_map = feature_extract(inputs)
     positions = position_predict(feature_map)
     train_model = tf.keras.Model(inputs, positions)
-    return train_model
+    reconstructed_boxes = tf.keras.layers.Lambda(lambda x: reconstruct_bounding_boxes(sequence.anchor_boxes, x))(positions)
+    prediction_model = tf.keras.Model(inputs, reconstructed_boxes)
+    return train_model, prediction_model
 
 
 def weighted_binary_cross_entropy(output, target, weights):
@@ -301,19 +316,23 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
 
 def main():
     sequence = Sequence('data/test')
-    model = create_models()
+    model, prediction_model = create_models(sequence)
+    prediction_model.summary()
     optim = tf.train.AdamOptimizer()
     callbacks = [
         tf.keras.callbacks.ModelCheckpoint("checkpoint"),
         tf.keras.callbacks.TensorBoard(),
     ]
-    print('Compile')
-    model.compile(optimizer=optim, loss=loss_positions)
-    model.summary()
-    print('Fit')
-    model.fit_generator(sequence, callbacks=callbacks)
-    print('Done')
-    print(model)
+    images, _ = sequence[0]
+    boxes = prediction_model.predict(images)
+    ic(boxes.shape)
+    # print('Compile')
+    # model.compile(optimizer=optim, loss=loss_positions)
+    # model.summary()
+    # print('Fit')
+    # model.fit_generator(sequence, callbacks=callbacks)
+    # print('Done')
+    # print(model)
 
 
 if __name__ == '__main__':
