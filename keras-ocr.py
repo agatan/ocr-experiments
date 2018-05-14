@@ -124,7 +124,9 @@ class Sequence(tf.keras.utils.Sequence):
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             img = img.resize((304, 192))
-            images[i] = np.array(img)
+            img = np.array(img)
+            img_std = (img - img.mean()) / img.std()
+            images[i] = np.array(img_std)
         box_targets = []
         for boxes in self.bounding_boxes[start:end]:
             box_targets.append(self.encode(boxes, self.input_size))
