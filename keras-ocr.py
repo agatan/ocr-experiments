@@ -327,7 +327,7 @@ def main():
         model, prediction_model = create_models(sequence)
         optim = tf.train.AdamOptimizer()
         callbacks = [
-            tf.keras.callbacks.ModelCheckpoint("checkpoint"),
+            tf.keras.callbacks.ModelCheckpoint("checkpoint.h5"),
             tf.keras.callbacks.TensorBoard(),
         ]
         model.compile(optimizer=optim, loss=loss_positions)
