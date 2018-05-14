@@ -257,7 +257,8 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
 
     def nms_fn(boxes):
         MAX_BOXES = 64
-        indices = tf.image.non_max_suppression(boxes[:, 1:], boxes[:, 0], MAX_BOXES)
+        indices = tf.image.non_max_suppression(
+            boxes[:, 1:], boxes[:, 0], MAX_BOXES)
         boxes = tf.gather(boxes, indices)
         boxes = tf.pad(boxes, [[0, MAX_BOXES - tf.shape(boxes)[0]], [0, 0]])
         boxes.set_shape([MAX_BOXES, 5])
@@ -273,7 +274,8 @@ def create_models(sequence):
     positions = position_predict(feature_map)
     train_model = tf.keras.Model(inputs, positions)
     anchor_boxes = sequence.anchor_boxes
-    reconstructed_boxes = tf.keras.layers.Lambda(lambda x: reconstruct_bounding_boxes(anchor_boxes, x))(positions)
+    reconstructed_boxes = tf.keras.layers.Lambda(
+        lambda x: reconstruct_bounding_boxes(anchor_boxes, x))(positions)
     prediction_model = tf.keras.Model(inputs, reconstructed_boxes)
     return train_model, prediction_model
 
