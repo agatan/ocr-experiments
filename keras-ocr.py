@@ -1,6 +1,9 @@
+import os
+import json
 import math
 import tensorflow as tf
 import numpy as np
+from PIL import Image
 import datagen
 from group_norm import GroupNormalization
 
@@ -15,15 +18,18 @@ def meshgrid(x, y):
     xx, yy = np.meshgrid(np.arange(0, x), np.arange(0, y))
     return np.concatenate([np.expand_dims(xx, 2), np.expand_dims(yy, 2)], axis=2)
 
+
 def xywh2xyxy(boxes):
     xy = boxes[..., :2]
     wh = boxes[..., 2:]
     return np.concatenate([xy - wh / 2, xy + wh / 2], -1)
 
+
 def xyxy2xywh(boxes):
     xymin = boxes[..., :2]
     xymax = boxes[..., 2:]
     return np.concatenate([(xymin + xymax) / 2, xymax - xymin + 1], -1)
+
 
 def box_iou(box1, box2):
     x11, y11, x12, y12 = np.split(box1, 4, axis=1)
@@ -38,11 +44,19 @@ def box_iou(box1, box2):
     iou = interArea / (boxAArea + np.transpose(boxBArea) - interArea)
     return iou
 
-class DataEncoder():
-    def __init__(self):
+
+class Sequence(tf.keras.utils.Sequence):
+    def __init__(self, root: str, input_size: np.ndarray = INPUT_SIZE, batch_size=32):
+        self.root = root
+        self.batch_size = batch_size
+        self.input_size = input_size
         self.anchor_areas = [16.0*16.0, 32*32.0, 64*64.0]
         self.aspect_ratios = [2.0, 8.0, 16.0]
         self.anchor_wh = self._get_anchor_wh()
+        self.anchor_boxes = self._get_anchor_boxes(input_size)
+        self.max_boxes = 20
+        self.max_characters = 50
+        self._load_data()
 
     def _get_anchor_wh(self):
         anchor_wh = []
@@ -62,6 +76,61 @@ class DataEncoder():
         wh = np.tile(self.anchor_wh.reshape(1, 1, 9, 2), [fm_h, fm_w, 1, 1])
         box = np.concatenate((xy, wh), axis=3)
         return box.reshape(-1, 4)
+
+    def _load_data(self):
+        fnames = []
+        bounding_boxes = []
+        texts = []
+        lengths = []
+        data_number = 0
+        while True:
+            f = os.path.join(self.root, f'{data_number}.json')
+            if not os.path.isfile(f):
+                break
+            data_number += 1
+            with open(f, 'r') as fp:
+                info = json.load(fp)
+            fnames.append(info['file'])
+            boxes = np.zeros((self.max_boxes, 4))
+            ts = np.zeros((self.max_boxes, self.max_characters), dtype=np.int32)
+            ls = np.zeros(self.max_boxes, dtype=np.int32)
+            for i, b in enumerate(info['boxes']):
+                xmin, ymin = float(b['left']), float(b['top'])
+                xmax, ymax = xmin + float(b['width']), ymin + float(b['height'])
+                boxes[i] = [xmin, ymin, xmax, ymax]
+                text = datagen.text2idx(b['text'])
+                assert(len(text) <= self.max_characters)
+                ts[i, :len(text)] = text
+                ls[i] = len(text)
+            bounding_boxes.append(boxes)
+            texts.append(ts)
+            lengths.append(ls)
+        self.fnames = fnames
+        self.bounding_boxes = bounding_boxes
+        self.texts = texts
+        self.lengths = lengths
+        self.n_examples = data_number
+
+    def __len__(self):
+        return math.ceil(self.n_examples / self.batch_size)
+
+    def __getitem__(self, idx):
+        start = self.batch_size * idx
+        end = min(self.batch_size * (idx + 1), self.n_examples)
+        images = np.zeros(
+            (end - start, self.input_size[1], self.input_size[0], 3))
+        for i, f in enumerate(self.fnames[start:end]):
+            img = Image.open(os.path.join(self.root, f))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img = img.resize((304, 192))
+            images[i] = np.array(img)
+        box_targets = []
+        for boxes in self.bounding_boxes[start:end]:
+            box_targets.append(self.encode(boxes, self.input_size))
+        box_targets = np.array(box_targets)
+
+        return images, box_targets
 
     def encode(self, boxes: np.ndarray, input_size: np.ndarray):
         '''
@@ -104,8 +173,10 @@ class DataEncoder():
         Returns:
             boxes: tensor [#batch, H * W, [preds, x1, y1, x2, y2]]
         '''
-        anchor_boxes = tf.convert_to_tensor(self._get_anchor_boxes(INPUT_SIZE), dtype=tf.float32)
-        flatten = tf.reshape(outputs, (-1, FEATURE_SIZE[0] * FEATURE_SIZE[1] * 9, 5))
+        anchor_boxes = tf.convert_to_tensor(
+            self._get_anchor_boxes(INPUT_SIZE), dtype=tf.float32)
+        flatten = tf.reshape(
+            outputs, (-1, FEATURE_SIZE[0] * FEATURE_SIZE[1] * 9, 5))
         out_xys = flatten[..., 1:3]
         out_whs = tf.sigmoid(flatten[..., 3:5])
 
@@ -127,54 +198,10 @@ class DataEncoder():
         wh = np.exp(loc_wh) * anchor_boxes[:, 2:]
         boxes = np.concatenate([xy - wh / 2, xy + wh / 2], axis=1)
 
-        score = conf_preds # TODO: sigmoid
+        score = conf_preds  # TODO: sigmoid
         ids = score > conf_thres
         ids = np.nonzero(ids)[0]
         return boxes[ids]
-
-def generator(root: str, encoder: DataEncoder):
-    import os
-    import json
-    from PIL import Image
-    input_size = INPUT_SIZE
-    fnames = []
-    boxes = []
-    texts = []
-    lengths = []
-    i = 0
-    while True:
-        f = os.path.join(root, f'{i}.json')
-        i += 1
-        if not os.path.isfile(f):
-            break
-        with open(f, 'r') as fp:
-            info = json.load(fp)
-        fnames.append(info['file'])
-        bbs = np.zeros((20, 4))
-        ts = np.zeros((20, 100), dtype=np.int32)
-        lens = np.zeros(20, dtype=np.int32)
-        for j, b in enumerate(info['boxes']):
-            xmin = float(b['left'])
-            ymin = float(b['top'])
-            xmax = xmin + float(b['width'])
-            ymax = ymin + float(b['height'])
-            bbs[j] = [xmin, ymin, xmax, ymax]
-            text = datagen.text2idx(b['text'])
-            ts[j, :len(text)] = text
-            lens[j] = len(text)
-        boxes.append(np.array(bbs))
-        texts.append(np.array(ts))
-        lengths.append(lens)
-    def g():
-        for fname, bbs, ts, lens in zip(fnames, boxes, texts, lengths):
-            img = Image.open(os.path.join(root, fname))
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            img = img.resize((304, 192))
-            img = np.array(img)
-            loc_targets = encoder.encode(bbs, input_size)
-            yield img, loc_targets, bbs, ts, lens
-    return g
 
 
 def _bottleneck(inputs, channels, strides):
@@ -182,7 +209,8 @@ def _bottleneck(inputs, channels, strides):
         tf.keras.layers.Conv2D(channels, kernel_size=1, use_bias=False),
         GroupNormalization(channels // 4),
         tf.keras.layers.Activation(tf.keras.activations.relu),
-        tf.keras.layers.Conv2D(channels, kernel_size=3, strides=strides, use_bias=False, padding='same'),
+        tf.keras.layers.Conv2D(channels, kernel_size=3,
+                               strides=strides, use_bias=False, padding='same'),
         GroupNormalization(channels // 4),
         tf.keras.layers.Activation(tf.keras.activations.relu),
         tf.keras.layers.Conv2D(2 * channels, kernel_size=1, use_bias=False),
@@ -190,7 +218,8 @@ def _bottleneck(inputs, channels, strides):
     ])(inputs)
     if strides != 1 or inputs.shape[-1] != x.shape[-1]:
         res = tf.keras.Sequential([
-            tf.keras.layers.Conv2D(2 * channels, kernel_size=1, strides=strides, use_bias=False),
+            tf.keras.layers.Conv2D(
+                2 * channels, kernel_size=1, strides=strides, use_bias=False),
             GroupNormalization(channels // 4),
         ])(inputs)
         x = tf.keras.layers.Add()([x, res])
@@ -199,7 +228,8 @@ def _bottleneck(inputs, channels, strides):
 
 def feature_extract(inputs):
     c1 = tf.keras.Sequential([
-        tf.keras.layers.Conv2D(64, kernel_size=3, strides=1, padding='same', use_bias=False),
+        tf.keras.layers.Conv2D(64, kernel_size=3, strides=1,
+                               padding='same', use_bias=False),
         GroupNormalization(32),
         tf.keras.layers.Activation(tf.keras.activations.relu),
         tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same'),
@@ -210,11 +240,15 @@ def feature_extract(inputs):
     c5 = _bottleneck(c4, 512, strides=2)
     p5 = tf.keras.layers.Conv2D(256, kernel_size=1, strides=1)(c5)
     x = tf.keras.layers.Conv2D(256, kernel_size=1, strides=1)(c4)
-    p4 = tf.keras.layers.Add()([tf.keras.layers.UpSampling2D(size=(2, 2))(p5), x])
-    p4 = tf.keras.layers.Conv2D(128, kernel_size=3, strides=1, padding='same')(p4)
+    p4 = tf.keras.layers.Add()(
+        [tf.keras.layers.UpSampling2D(size=(2, 2))(p5), x])
+    p4 = tf.keras.layers.Conv2D(
+        128, kernel_size=3, strides=1, padding='same')(p4)
     x = tf.keras.layers.Conv2D(128, kernel_size=1, strides=1)(c3)
-    p3 = tf.keras.layers.Add()([tf.keras.layers.UpSampling2D(size=(2, 2))(p4), x])
-    p3 = tf.keras.layers.Conv2D(128, kernel_size=3, strides=1, padding='same')(p3)
+    p3 = tf.keras.layers.Add()(
+        [tf.keras.layers.UpSampling2D(size=(2, 2))(p4), x])
+    p3 = tf.keras.layers.Conv2D(
+        128, kernel_size=3, strides=1, padding='same')(p3)
     return p3
 
 
@@ -222,8 +256,17 @@ def position_predict(feature_map):
     return tf.keras.layers.Conv2D(9 * 5, kernel_size=1, strides=1)(feature_map)
 
 
+def create_models():
+    inputs = tf.keras.Input(shape=(192, 304, 3))
+    feature_map = feature_extract(inputs)
+    positions = position_predict(feature_map)
+    train_model = tf.keras.Model(inputs, positions)
+    return train_model
+
+
 def weighted_binary_cross_entropy(output, target, weights):
-    loss = weights[1] * (target * tf.log(output + 1e-8)) + weights[0] * ((1 - target) * tf.log(1 - output + 1e-8))
+    loss = weights[1] * (target * tf.log(output + 1e-8)) + \
+        weights[0] * ((1 - target) * tf.log(1 - output + 1e-8))
     return tf.negative(tf.reduce_mean(loss))
 
 
@@ -244,9 +287,12 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
     loc_preds = tf.concat([xy_preds, wh_preds], axis=1)
     loc_targets = loc_targets[..., 1:]
 
-    loss_conf = weighted_binary_cross_entropy(conf_preds, conf_targets, weights=[1, 10])
-    loss_loc = tf.reduce_sum(tf.losses.mean_squared_error(loc_targets, loc_preds, reduction=tf.losses.Reduction.NONE), axis=1)
-    loss_loc_mean = tf.reduce_sum(loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
+    loss_conf = weighted_binary_cross_entropy(
+        conf_preds, conf_targets, weights=[1, 10])
+    loss_loc = tf.reduce_sum(tf.losses.mean_squared_error(
+        loc_targets, loc_preds, reduction=tf.losses.Reduction.NONE), axis=1)
+    loss_loc_mean = tf.reduce_sum(
+        loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
     tf.summary.scalar('loss_conf', loss_conf)
     tf.summary.scalar('loss_location', loss_loc_mean)
     loss = loss_conf + 5 * loss_loc_mean
@@ -254,30 +300,19 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
 
 
 def main():
-    tf.enable_eager_execution()
-    # return
-
-    dataset = tf.data.Dataset.from_generator(generator('data/test', DataEncoder()), (tf.float32, tf.float32, tf.float32, tf.int32, tf.int32))
-    dataset = dataset.map(lambda img, locs, bbs, texts, lengths: (tf.image.per_image_standardization(img), locs, bbs, texts, lengths))
-    dataset = dataset.padded_batch(8, padded_shapes=([192, 304, 3], [FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5], [None, 4], [None, 100], [None]))
-    def mapper(img, locs, bbs, texts, lengths):
-        return (img, dict(box=locs, bbs=bbs, texts=texts, lengths=lengths))
-    dataset = dataset.map(mapper)
-
-    ic(next(iter(dataset)))
-    inputs = tf.keras.Input(shape=(192, 304, 3))
-    feature_map = feature_extract(inputs)
-    position = position_predict(feature_map)
-    model = tf.keras.Model(inputs, position)
+    sequence = Sequence('data/test')
+    model = create_models()
     optim = tf.train.AdamOptimizer()
-    callback = tf.keras.callbacks.ModelCheckpoint("checkpoint")
-    callback.set_model(model)
+    callbacks = [
+        tf.keras.callbacks.ModelCheckpoint("checkpoint"),
+        tf.keras.callbacks.TensorBoard(),
+    ]
+    print('Compile')
     model.compile(optimizer=optim, loss=loss_positions)
-    model.fit_generator(dataset, callbacks=[callback])
     model.summary()
+    print('Fit')
+    model.fit_generator(sequence, callbacks=callbacks)
     print('Done')
-    for (images, labels) in dataset:
-        model.train_on_batch(images, labels['box'], call)
     print(model)
 
 
