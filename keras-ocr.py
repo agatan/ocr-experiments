@@ -268,16 +268,121 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
     return boxes
 
 
+def roi_pooling(image: tf.Tensor, boxes: tf.Tensor, height):
+    base_widths = boxes[:, 2] - boxes[:, 0]
+    base_heights = boxes[:, 3] - boxes[:, 1]
+    aspects = base_widths / base_heights
+    # widths = tf.ceil(aspects * float(height))
+    max_width = 80
+
+    def mapper(box):
+        cond = tf.reduce_any(tf.not_equal(box, 0))
+        def then_branch():
+            base_width = box[2] - box[0]
+            base_height = box[3] - box[1]
+            aspect = base_width / base_height
+            width = tf.ceil(aspect * float(height))
+            map_w = base_width / (width - 1)
+            map_h = base_height / (height - 1)
+            xx = tf.range(0, width, dtype=tf.float32) * map_w + box[0]
+            yy = tf.range(0, height, dtype=tf.float32) * map_h + box[1]
+            pooled = bilinear_interpolate(image, xx, yy)
+            padded = tf.pad(
+                pooled, [[0, 0], [0, max_width - tf.cast(width, tf.int32)], [0, 0]])
+            padded.set_shape((height, max_width, None))
+            return padded
+        def else_branch():
+            return tf.zeros((height, max_width, tf.shape(image)[-1]))
+        return tf.cond(cond, then_branch, else_branch)
+
+    results = tf.map_fn(mapper, boxes)
+    results.set_shape([None, height, None, image.shape[-1]])
+    return results
+
+
+def roi_pooling_in_batch(feature_maps: tf.Tensor, boxes: tf.Tensor, height: int):
+    def mapper(i):
+        fm = feature_maps[i]
+        bbs = boxes[i]
+        return roi_pooling(fm, bbs, height)
+    return tf.map_fn(mapper, tf.range(tf.shape(feature_maps)[0]), dtype=tf.float32)
+
+
+def bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
+    '''
+    Args:
+        img: [H, W, C]
+        x: [-1]
+        y: [-1]
+    '''
+    def to_f(t):
+        return tf.cast(t, dtype=tf.float32)
+
+    x0 = tf.cast(tf.floor(x), dtype=tf.int32)
+    x1 = x0 + 1
+    y0 = tf.cast(tf.floor(y), dtype=tf.int32)
+    y1 = y0 + 1
+
+    x0 = tf.clip_by_value(x0, 0, tf.shape(img)[1] - 1)
+    x1 = tf.clip_by_value(x1, 0, tf.shape(img)[1] - 1)
+    y0 = tf.clip_by_value(y0, 0, tf.shape(img)[0] - 1)
+    y1 = tf.clip_by_value(y1, 0, tf.shape(img)[0] - 1)
+
+    img_a = tf.gather(tf.gather(img, x0, axis=1), y0, axis=0)
+    img_b = tf.gather(tf.gather(img, x1, axis=1), y0, axis=0)
+    img_c = tf.gather(tf.gather(img, x0, axis=1), y1, axis=0)
+    img_d = tf.gather(tf.gather(img, x1, axis=1), y1, axis=0)
+
+    def meshgrid_distance(x_distance, y_distance):
+        x, y = tf.meshgrid(x_distance, y_distance)
+        return x * y
+
+    wa = meshgrid_distance(to_f(x1) - x, to_f(y1) - y)
+    wb = meshgrid_distance(to_f(x1) - x, y - to_f(y0))
+    wc = meshgrid_distance(x - to_f(x0), to_f(y1) - y)
+    wd = meshgrid_distance(x - to_f(x0), y - to_f(y0))
+    wa = tf.expand_dims(wa, 2)
+    wb = tf.expand_dims(wb, 2)
+    wc = tf.expand_dims(wc, 2)
+    wd = tf.expand_dims(wd, 2)
+
+    flatten_interporated = img_a * wa + img_b * wb + img_c * wc + img_d * wd
+    return flatten_interporated
+
+
+def ocr_predict(features):
+    def mapper(feature):
+        def block(x, channels):
+            return tf.keras.Sequential([
+                tf.keras.layers.Conv2D(channels, kernel_size=3, strides=1, padding='same'),
+                GroupNormalization(groups=channels // 4),
+                tf.keras.layers.Activation(tf.keras.activations.relu),
+                tf.keras.layers.MaxPooling2D((2, 1), strides=(2, 1)),
+            ])(x)
+        x = feature
+        for c in [128, 256, 512]:
+            x = block(x, c)
+        x = tf.keras.layers.Conv2D(len(datagen.CHAR2IDX) + 2, kernel_size=3, strides=1, padding='same')(x)
+        x = tf.keras.layers.Softmax()(x)
+        return tf.keras.backend.squeeze(x, axis=1)
+    return tf.keras.backend.map_fn(mapper, features)
+
+
 def create_models(sequence):
-    inputs = tf.keras.Input(shape=(192, 304, 3))
-    feature_map = feature_extract(inputs)
+    images = tf.keras.Input(shape=(192, 304, 3))
+    feature_map = feature_extract(images)
     positions = position_predict(feature_map)
-    train_model = tf.keras.Model(inputs, positions)
+    train_model = tf.keras.Model(images, positions)
     anchor_boxes = sequence.anchor_boxes
     reconstructed_boxes = tf.keras.layers.Lambda(
         lambda x: reconstruct_bounding_boxes(anchor_boxes, x))(positions)
-    prediction_model = tf.keras.Model(inputs, reconstructed_boxes)
-    return train_model, prediction_model
+    prediction_model = tf.keras.Model(images, reconstructed_boxes)
+
+    boxes = tf.keras.Input(shape=(20, 4))
+    pooled = tf.keras.layers.Lambda(lambda feature_map, boxes: roi_pooling_in_batch(feature_map, boxes, 8), arguments=dict(boxes=boxes))(feature_map)
+    ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(pooled)
+    ocr_model = tf.keras.Model(images, ocr_prediction)
+    return train_model, prediction_model, ocr_model
 
 
 def weighted_binary_cross_entropy(output, target, weights):
@@ -324,7 +429,7 @@ def main():
     sequence = Sequence('data/test')
 
     if not args.eval:
-        model, prediction_model = create_models(sequence)
+        model, prediction_model, ocr_model = create_models(sequence)
         optim = tf.train.AdamOptimizer()
         callbacks = [
             tf.keras.callbacks.ModelCheckpoint("checkpoint.h5"),
