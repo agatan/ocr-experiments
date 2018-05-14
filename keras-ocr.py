@@ -274,7 +274,8 @@ def create_models(sequence):
     feature_map = feature_extract(inputs)
     positions = position_predict(feature_map)
     train_model = tf.keras.Model(inputs, positions)
-    reconstructed_boxes = tf.keras.layers.Lambda(lambda x: reconstruct_bounding_boxes(sequence.anchor_boxes, x))(positions)
+    anchor_boxes = sequence.anchor_boxes
+    reconstructed_boxes = tf.keras.layers.Lambda(lambda x: reconstruct_bounding_boxes(anchor_boxes, x))(positions)
     prediction_model = tf.keras.Model(inputs, reconstructed_boxes)
     return train_model, prediction_model
 
@@ -315,24 +316,30 @@ def loss_positions(loc_preds: tf.Tensor, loc_targets: tf.Tensor):
 
 
 def main():
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('--eval', action='store_true')
+    args = parser.parse_args()
+
     sequence = Sequence('data/test')
-    model, prediction_model = create_models(sequence)
-    prediction_model.summary()
-    optim = tf.train.AdamOptimizer()
-    callbacks = [
-        tf.keras.callbacks.ModelCheckpoint("checkpoint"),
-        tf.keras.callbacks.TensorBoard(),
-    ]
-    images, _ = sequence[0]
-    boxes = prediction_model.predict(images)
-    ic(boxes.shape)
-    # print('Compile')
-    # model.compile(optimizer=optim, loss=loss_positions)
-    # model.summary()
-    # print('Fit')
-    # model.fit_generator(sequence, callbacks=callbacks)
-    # print('Done')
-    # print(model)
+
+    if not args.eval:
+        model, prediction_model = create_models(sequence)
+        optim = tf.train.AdamOptimizer()
+        callbacks = [
+            tf.keras.callbacks.ModelCheckpoint("checkpoint"),
+            tf.keras.callbacks.TensorBoard(),
+        ]
+        model.compile(optimizer=optim, loss=loss_positions)
+        model.summary()
+        model.fit_generator(sequence, callbacks=callbacks)
+        model.save_weights("weights.h5")
+    else:
+        _, prediction_model = create_models(sequence)
+        prediction_model.load_weights("weights.h5", by_name=True)
+        images, _ = sequence[0]
+        boxes = prediction_model.predict(images)
+        ic(boxes.shape)
 
 
 if __name__ == '__main__':
