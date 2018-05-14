@@ -259,7 +259,7 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
 
     def nms_fn(boxes):
         MAX_BOXES = 64
-        indices = tf.where(boxes[:, 0] > 0.7)
+        indices = tf.where(boxes[:, 0] > 0.8)
         boxes = tf.gather_nd(boxes, indices)
         indices = tf.image.non_max_suppression(
             boxes[:, 1:], boxes[:, 0], MAX_BOXES)
@@ -420,7 +420,7 @@ def loss_positions(loc_targets: tf.Tensor, loc_preds: tf.Tensor):
         loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
     tf.summary.scalar('loss_conf', loss_conf)
     tf.summary.scalar('loss_location', loss_loc_mean)
-    loss = loss_conf + loss_loc_mean
+    loss = loss_conf + 3 * loss_loc_mean
     return loss
 
 
@@ -440,7 +440,7 @@ def main():
         ]
         model.compile(optimizer='adam', loss=loss_positions)
         model.summary()
-        model.fit_generator(sequence, callbacks=callbacks, epochs=100)
+        model.fit_generator(sequence, callbacks=callbacks, epochs=500)
         model.save_weights("weights.h5")
     else:
         from PIL import ImageDraw
@@ -448,10 +448,11 @@ def main():
         _, prediction_model, _ = create_models(sequence)
         prediction_model.load_weights("weights.h5", by_name=True)
         images, _ = sequence[0]
+        i = np.random.randint(0, 7)
         boxes = prediction_model.predict(images)
-        img = Image.fromarray(images[1].astype(np.uint8))
+        img = Image.fromarray(images[i].astype(np.uint8))
         draw = ImageDraw.Draw(img)
-        for box in boxes[1]:
+        for box in boxes[i]:
             print(box)
             draw.rectangle(list(box[1:]), outline='red')
         del draw
