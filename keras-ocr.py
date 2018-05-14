@@ -259,7 +259,7 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
 
     def nms_fn(boxes):
         MAX_BOXES = 64
-        indices = tf.where(boxes[:, 0] > 0.8)
+        indices = tf.where(boxes[:, 0] > 0.5)
         boxes = tf.gather_nd(boxes, indices)
         indices = tf.image.non_max_suppression(
             boxes[:, 1:], boxes[:, 0], MAX_BOXES)
@@ -430,7 +430,7 @@ def main():
     parser.add_argument('--eval', action='store_true')
     args = parser.parse_args()
 
-    sequence = Sequence('data/test')
+    sequence = Sequence('data/train-all', batch_size=16)
 
     if not args.eval:
         model, prediction_model, ocr_model = create_models(sequence)
@@ -440,7 +440,7 @@ def main():
         ]
         model.compile(optimizer='adam', loss=loss_positions)
         model.summary()
-        model.fit_generator(sequence, callbacks=callbacks, epochs=500)
+        model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=4, use_multiprocessing=True)
         model.save_weights("weights.h5")
     else:
         from PIL import ImageDraw
