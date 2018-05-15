@@ -106,7 +106,7 @@ class Sequence(tf.keras.utils.Sequence):
             texts.append(ts)
             lengths.append(ls)
         self.fnames = fnames
-        self.bounding_boxes = bounding_boxes
+        self.bounding_boxes = np.array(bounding_boxes)
         self.texts = texts
         self.lengths = lengths
         self.n_examples = data_number
@@ -132,7 +132,7 @@ class Sequence(tf.keras.utils.Sequence):
             box_targets.append(self.encode(boxes, self.input_size))
         box_targets = np.array(box_targets)
 
-        return images, box_targets
+        return dict(images=images, boxes=self.bounding_boxes[start:end]), dict(positions=box_targets)
 
     def encode(self, boxes: np.ndarray, input_size: np.ndarray):
         '''
@@ -234,8 +234,8 @@ def feature_extract(inputs):
     return p3
 
 
-def position_predict(feature_map):
-    return tf.keras.layers.Conv2D(9 * 5, kernel_size=1, strides=1)(feature_map)
+def position_predict(feature_map, name):
+    return tf.keras.layers.Conv2D(9 * 5, kernel_size=1, strides=1, name=name)(feature_map)
 
 
 def reconstruct_bounding_boxes(anchor_boxes, outputs):
@@ -364,7 +364,7 @@ def ocr_predict(features):
                 tf.keras.layers.MaxPooling2D((2, 1), strides=(2, 1)),
             ])(x)
         x = feature
-        for c in [128, 256, 512]:
+        for c in [128, 256]:
             x = block(x, c)
         x = tf.keras.layers.Conv2D(len(datagen.CHAR2IDX) + 2, kernel_size=3, strides=1, padding='same')(x)
         x = tf.keras.layers.Softmax()(x)
@@ -373,20 +373,23 @@ def ocr_predict(features):
 
 
 def create_models(sequence):
-    images = tf.keras.Input(shape=(192, 304, 3))
+    images = tf.keras.Input(shape=(192, 304, 3), name='images')
     feature_map = feature_extract(images)
-    positions = position_predict(feature_map)
-    train_model = tf.keras.Model(images, positions)
+    positions = position_predict(feature_map, name='positions')
+
+    boxes = tf.keras.Input(shape=(20, 4), name='boxes')
+    pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, boxes])
+    ocr_prediction = tf.keras.layers.Lambda(ocr_predict, name='ocr')(pooled)
+
+    train_model = tf.keras.Model([images, boxes], [positions, ocr_prediction])
+
     anchor_boxes = sequence.anchor_boxes
     reconstructed_boxes = tf.keras.layers.Lambda(
-        lambda x: reconstruct_bounding_boxes(anchor_boxes, x))(positions)
-    prediction_model = tf.keras.Model(images, reconstructed_boxes)
-
-    boxes = tf.keras.Input(shape=(20, 4))
-    pooled = tf.keras.layers.Lambda(lambda feature_map, boxes: roi_pooling_in_batch(feature_map, boxes, 8), arguments=dict(boxes=boxes))(feature_map)
-    ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(pooled)
-    ocr_model = tf.keras.Model(images, ocr_prediction)
-    return train_model, prediction_model, ocr_model
+        lambda x: reconstruct_bounding_boxes(anchor_boxes, x), name='boxes')(positions)
+    predicted_boxes_pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, reconstructed_boxes])
+    predicted_boxes_ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(predicted_boxes_pooled)
+    prediction_model = tf.keras.Model(images, [reconstructed_boxes, predicted_boxes_ocr_prediction])
+    return train_model, prediction_model
 
 
 def weighted_binary_cross_entropy(output, target, weights):
@@ -395,32 +398,32 @@ def weighted_binary_cross_entropy(output, target, weights):
     return tf.negative(tf.reduce_mean(loss))
 
 
-def loss_positions(loc_targets: tf.Tensor, loc_preds: tf.Tensor):
+def loss_positions(targets: tf.Tensor, preds: tf.Tensor):
     '''
     Args:
-        loc_targets: [#batch, h, w, (#anchor * [p, x, y, w, h])]
-        loc_preds: [#batch, h, w, (#anchor * [p, x, y, w, h])]
+        targets: [#batch, h, w, (#anchor * [p, x, y, w, h])]
+        preds: [#batch, h, w, (#anchor * [p, x, y, w, h])]
     '''
-    loc_preds = tf.reshape(loc_preds, (-1, 5))
-    loc_targets = tf.reshape(loc_targets, (-1, 5))
-    conf_preds = tf.sigmoid(loc_preds[..., 0])
-    conf_targets = loc_targets[..., 0]
+    preds = tf.reshape(preds, (-1, 5))
+    targets = tf.reshape(targets, (-1, 5))
+    conf_preds = tf.sigmoid(preds[..., 0])
+    conf_targets = targets[..., 0]
     mask = conf_targets > 0.9
 
-    xy_preds = loc_preds[..., 1:3]
-    wh_preds = loc_preds[..., 3:5]
-    loc_preds = tf.concat([xy_preds, wh_preds], axis=1)
-    loc_targets = loc_targets[..., 1:]
+    xy_preds = preds[..., 1:3]
+    wh_preds = preds[..., 3:5]
+    preds = tf.concat([xy_preds, wh_preds], axis=1)
+    targets = targets[..., 1:]
 
     loss_conf = weighted_binary_cross_entropy(
         conf_preds, conf_targets, weights=[1, 10])
     loss_loc = tf.reduce_sum(tf.losses.mean_squared_error(
-        loc_targets, loc_preds, reduction=tf.losses.Reduction.NONE), axis=1)
-    loss_loc_mean = tf.reduce_sum(
+        targets, preds, reduction=tf.losses.Reduction.NONE), axis=1)
+    loss_mean = tf.reduce_sum(
         loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
     tf.summary.scalar('loss_conf', loss_conf)
-    tf.summary.scalar('loss_location', loss_loc_mean)
-    loss = loss_conf + 3 * loss_loc_mean
+    tf.summary.scalar('loss_location', loss_mean)
+    loss = loss_conf + 3 * loss_mean
     return loss
 
 
@@ -430,22 +433,22 @@ def main():
     parser.add_argument('--eval', action='store_true')
     args = parser.parse_args()
 
-    sequence = Sequence('data/train-all', batch_size=16)
+    sequence = Sequence('data/train', batch_size=1)
 
     if not args.eval:
-        model, prediction_model, ocr_model = create_models(sequence)
+        model, prediction_model = create_models(sequence)
         callbacks = [
             tf.keras.callbacks.ModelCheckpoint("checkpoint.h5"),
             tf.keras.callbacks.TensorBoard(),
         ]
-        model.compile(optimizer='adam', loss=loss_positions)
+        model.compile(optimizer='adam', loss=dict(positions=loss_positions))
         model.summary()
         model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=4, use_multiprocessing=True)
         model.save_weights("weights.h5")
     else:
         from PIL import ImageDraw
 
-        _, prediction_model, _ = create_models(sequence)
+        _, prediction_model = create_models(sequence)
         prediction_model.load_weights("weights.h5", by_name=True)
         images, _ = sequence[0]
         i = np.random.randint(0, 7)
