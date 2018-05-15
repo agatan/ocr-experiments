@@ -255,7 +255,13 @@ def reconstruct_bounding_boxes(anchor_boxes, outputs):
     preds = tf.sigmoid(flatten[..., 0:1])
     xy = out_xys * anchor_boxes[:, 2:] + anchor_boxes[:, :2]
     wh = tf.exp(out_whs) * anchor_boxes[:, 2:]
-    boxes = tf.concat([preds, xy - wh / 2, xy + wh / 2], axis=2)
+    xy_min = xy - wh / 2
+    xy_max = xy + wh / 2
+    xmin = tf.clip_by_value(xy_min[..., :1], 0, INPUT_SIZE[0])
+    ymin = tf.clip_by_value(xy_min[..., 1:], 0, INPUT_SIZE[1])
+    xmax = tf.clip_by_value(xy_max[..., :1], xmin, INPUT_SIZE[0])
+    ymax = tf.clip_by_value(xy_max[..., 1:], ymin, INPUT_SIZE[1])
+    boxes = tf.concat([preds, xmin, ymin, xmax, ymax], axis=2)
 
     def nms_fn(boxes):
         MAX_BOXES = 64
@@ -280,12 +286,13 @@ def roi_pooling(image: tf.Tensor, boxes: tf.Tensor, height):
     max_width = 80
 
     def mapper(box):
-        cond = tf.reduce_any(tf.not_equal(box, 0))
+        cond = tf.logical_and(tf.reduce_any(tf.not_equal(box, 0)), tf.logical_and(box[2] > box[0], box[3] > box[1]))
         def then_branch():
             base_width = box[2] - box[0]
             base_height = box[3] - box[1]
             aspect = base_width / base_height
             width = tf.ceil(aspect * float(height))
+            width = tf.minimum(float(max_width), width)
             map_w = base_width / (width - 1)
             map_h = base_height / (height - 1)
             xx = tf.range(0, width, dtype=tf.float32) * map_w + box[0]
@@ -433,7 +440,7 @@ def main():
     parser.add_argument('--eval', action='store_true')
     args = parser.parse_args()
 
-    sequence = Sequence('data/train', batch_size=1)
+    sequence = Sequence('data/train', batch_size=8)
 
     if not args.eval:
         model, prediction_model = create_models(sequence)
@@ -450,9 +457,10 @@ def main():
 
         _, prediction_model = create_models(sequence)
         prediction_model.load_weights("weights.h5", by_name=True)
-        images, _ = sequence[0]
+        inputs, _ = sequence[0]
+        images = inputs['images']
         i = np.random.randint(0, 7)
-        boxes = prediction_model.predict(images)
+        boxes, ocr = prediction_model.predict(images)
         img = Image.fromarray(images[i].astype(np.uint8))
         draw = ImageDraw.Draw(img)
         for box in boxes[i]:
