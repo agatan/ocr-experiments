@@ -55,7 +55,7 @@ class Sequence(tf.keras.utils.Sequence):
         self.anchor_wh = self._get_anchor_wh()
         self.anchor_boxes = self._get_anchor_boxes(input_size)
         self.max_boxes = 20
-        self.max_characters = 50
+        self.max_characters = 80
         self._load_data()
 
     def _get_anchor_wh(self):
@@ -107,7 +107,7 @@ class Sequence(tf.keras.utils.Sequence):
             lengths.append(ls)
         self.fnames = fnames
         self.bounding_boxes = np.array(bounding_boxes)
-        self.texts = texts
+        self.texts = np.array(texts)
         self.lengths = lengths
         self.n_examples = data_number
 
@@ -132,7 +132,7 @@ class Sequence(tf.keras.utils.Sequence):
             box_targets.append(self.encode(boxes, self.input_size))
         box_targets = np.array(box_targets)
 
-        return dict(images=images, boxes=self.bounding_boxes[start:end]), dict(positions=box_targets)
+        return dict(images=images, boxes=self.bounding_boxes[start:end], texts=self.texts[start:end]), dict(positions=box_targets, ocr=np.zeros(images.shape[0]))
 
     def encode(self, boxes: np.ndarray, input_size: np.ndarray):
         '''
@@ -385,10 +385,14 @@ def create_models(sequence):
     positions = position_predict(feature_map, name='positions')
 
     boxes = tf.keras.Input(shape=(20, 4), name='boxes')
+    texts = tf.keras.Input(shape=(20, 80), name='texts')
     pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, boxes])
-    ocr_prediction = tf.keras.layers.Lambda(ocr_predict, name='ocr')(pooled)
+    box_lengths = tf.keras.layers.Lambda(lambda pooled: tf.reduce_sum(tf.cast(tf.reduce_any(tf.reduce_any(tf.not_equal(pooled, 0), axis=4), axis=2), tf.int32), axis=2))(pooled)
+    ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(pooled)
+    ocr_loss = tf.keras.layers.Lambda(calc_ocr_loss, output_shape=(1,), name='ocr')([box_lengths, texts, ocr_prediction])
 
-    train_model = tf.keras.Model([images, boxes], [positions, ocr_prediction])
+    train_model = tf.keras.Model([images, boxes, texts], [positions, ocr_loss])
+    train_model.compile(optimizer='adam', loss=dict(positions=loss_positions, ocr=lambda y_true, y_pred: y_pred))
 
     anchor_boxes = sequence.anchor_boxes
     reconstructed_boxes = tf.keras.layers.Lambda(
@@ -434,6 +438,28 @@ def loss_positions(targets: tf.Tensor, preds: tf.Tensor):
     return loss
 
 
+def calc_ocr_loss(args):
+    lengths_pred, y_true, y_pred = args
+    '''
+    Args:
+        y_true: [#batch, #max_boxes, #max_length]
+        y_pred: [#batch, #max_boxes, #max_length, #labels]
+        lengths_true: [#batch, #max_boxes]
+        lengths_pred: [#batch, #max_boxes]
+    '''
+    lengths_true = tf.cast(tf.reduce_any(tf.not_equal(y_true, 0), axis=2), tf.int32)
+    y_true_flatten = tf.reshape(y_true, [-1, tf.shape(y_true)[-1]])
+    y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
+    lengths_true_flatten = tf.reshape(lengths_true, [-1])
+    lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
+    # indices = tf.where(lengths_true_flatten != 0)
+    # y_true_flatten = tf.gather_nd(y_true_flatten, indices)
+    # y_pred_flatten = tf.gather_nd(y_pred_flatten, indices)
+    # lengths_true_flatten = tf.expand_dims(tf.gather_nd(lengths_true_flatten, indices), axis=1)
+    # lengths_pred_flatten = tf.expand_dims(tf.gather_nd(lengths_pred_flatten, indices), axis=1)
+    return tf.keras.backend.ctc_batch_cost(y_true_flatten, y_pred_flatten, lengths_pred_flatten, lengths_true_flatten)
+
+
 def main():
     from argparse import ArgumentParser
     parser = ArgumentParser()
@@ -448,7 +474,6 @@ def main():
             tf.keras.callbacks.ModelCheckpoint("checkpoint.h5"),
             tf.keras.callbacks.TensorBoard(),
         ]
-        model.compile(optimizer='adam', loss=dict(positions=loss_positions))
         model.summary()
         model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=4, use_multiprocessing=True)
         model.save_weights("weights.h5")
