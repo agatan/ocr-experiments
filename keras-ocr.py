@@ -132,7 +132,9 @@ class Sequence(tf.keras.utils.Sequence):
             box_targets.append(self.encode(boxes, self.input_size))
         box_targets = np.array(box_targets)
 
-        return dict(images=images, boxes=self.bounding_boxes[start:end], texts=self.texts[start:end]), dict(positions=box_targets, ocr=np.zeros(images.shape[0]))
+        print(np.array([0] * images.shape[0]).shape)
+
+        return dict(images=images, boxes=self.bounding_boxes[start:end], texts=self.texts[start:end]), dict(positions=box_targets, ocr=np.zeros((images.shape[0])))
 
     def encode(self, boxes: np.ndarray, input_size: np.ndarray):
         '''
@@ -385,11 +387,11 @@ def create_models(sequence):
     positions = position_predict(feature_map, name='positions')
 
     boxes = tf.keras.Input(shape=(20, 4), name='boxes')
-    texts = tf.keras.Input(shape=(20, 80), name='texts')
+    texts = tf.keras.Input(shape=(20, 80), name='texts', dtype=tf.int32)
     pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, boxes])
     box_lengths = tf.keras.layers.Lambda(lambda pooled: tf.reduce_sum(tf.cast(tf.reduce_any(tf.reduce_any(tf.not_equal(pooled, 0), axis=4), axis=2), tf.int32), axis=2))(pooled)
     ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(pooled)
-    ocr_loss = tf.keras.layers.Lambda(calc_ocr_loss, output_shape=(1,), name='ocr')([box_lengths, texts, ocr_prediction])
+    ocr_loss = tf.keras.layers.Lambda(calc_ocr_loss, name='ocr')([box_lengths, texts, ocr_prediction])
 
     train_model = tf.keras.Model([images, boxes, texts], [positions, ocr_loss])
     train_model.compile(optimizer='adam', loss=dict(positions=loss_positions, ocr=lambda y_true, y_pred: y_pred))
@@ -452,12 +454,8 @@ def calc_ocr_loss(args):
     y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
     lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
-    # indices = tf.where(lengths_true_flatten != 0)
-    # y_true_flatten = tf.gather_nd(y_true_flatten, indices)
-    # y_pred_flatten = tf.gather_nd(y_pred_flatten, indices)
-    # lengths_true_flatten = tf.expand_dims(tf.gather_nd(lengths_true_flatten, indices), axis=1)
-    # lengths_pred_flatten = tf.expand_dims(tf.gather_nd(lengths_pred_flatten, indices), axis=1)
-    return tf.keras.backend.ctc_batch_cost(y_true_flatten, y_pred_flatten, lengths_pred_flatten, lengths_true_flatten)
+    y_true_flatten = tf.keras.backend.ctc_label_dense_to_sparse(y_true_flatten, lengths_true_flatten)
+    return tf.nn.ctc_loss(y_true_flatten, y_pred_flatten, lengths_true_flatten, time_major=False)
 
 
 def main():
