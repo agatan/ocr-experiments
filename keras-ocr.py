@@ -449,7 +449,7 @@ def calc_ocr_loss(args):
         lengths_true: [#batch, #max_boxes]
         lengths_pred: [#batch, #max_boxes]
     '''
-    lengths_true = tf.cast(tf.reduce_any(tf.not_equal(y_true, 0), axis=2), tf.int32)
+    lengths_true = tf.reduce_sum(tf.cast(tf.not_equal(y_true, 0), tf.int32), axis=2)
     y_true_flatten = tf.reshape(y_true, [-1, tf.shape(y_true)[-1]])
     y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
