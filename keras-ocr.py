@@ -398,8 +398,10 @@ def create_models(sequence):
     reconstructed_boxes = tf.keras.layers.Lambda(
         lambda x: reconstruct_bounding_boxes(anchor_boxes, x), name='boxes')(positions)
     predicted_boxes_pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, reconstructed_boxes])
+    box_lengths = tf.keras.layers.Lambda(lambda pooled: tf.reduce_sum(tf.cast(tf.reduce_any(tf.reduce_any(tf.not_equal(pooled, 0), axis=4), axis=2), tf.int32), axis=2))(predicted_boxes_pooled)
     predicted_boxes_ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(predicted_boxes_pooled)
-    prediction_model = tf.keras.Model(images, [reconstructed_boxes, predicted_boxes_ocr_prediction])
+    decoded_ocr_predictions = tf.keras.layers.Lambda(decode_ocr)([box_lengths, predicted_boxes_ocr_prediction])
+    prediction_model = tf.keras.Model(images, [reconstructed_boxes, decoded_ocr_predictions])
     return train_model, prediction_model
 
 
@@ -459,6 +461,19 @@ def calc_ocr_loss(args):
     lengths_pred_flatten = tf.gather_nd(lengths_pred_flatten, indices)
     y_true_flatten = tf.keras.backend.ctc_label_dense_to_sparse(y_true_flatten, lengths_true_flatten)
     return tf.expand_dims(tf.nn.ctc_loss(y_true_flatten, y_pred_flatten, lengths_true_flatten, time_major=False), axis=1)
+
+
+def decode_ocr(args):
+    lengths, ocr_predictions = args
+    '''
+    Args:
+        ocr_predictions: [#batch, #boxes, #max_time, #char]
+    '''
+    shape = tf.shape(ocr_predictions)
+    x = tf.reshape(ocr_predictions, [shape[0] * shape[1], shape[2], shape[3]])
+    lengths = tf.reshape(lengths, [-1])
+    decoded, probas = tf.keras.backend.ctc_decode(x, lengths)
+    return tf.reshape(decoded, [shape[0], shape[1], shape[2], -1])
 
 
 def main():
