@@ -392,7 +392,7 @@ def create_models(sequence):
     ocr_loss = tf.keras.layers.Lambda(calc_ocr_loss, name='ocr')([box_lengths, texts, ocr_prediction])
 
     train_model = tf.keras.Model([images, boxes, texts], [positions, ocr_loss])
-    train_model.compile(optimizer='adam', loss=dict(positions=loss_positions, ocr=lambda y_true, y_pred: y_pred))
+    train_model.compile(optimizer='adam', loss=dict(positions=loss_positions, ocr=lambda y_true, y_pred: y_pred), loss_weights=dict(positions=1, ocr=1))
 
     anchor_boxes = sequence.anchor_boxes
     reconstructed_boxes = tf.keras.layers.Lambda(
@@ -454,13 +454,13 @@ def calc_ocr_loss(args):
     y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
     lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
-    indices = tf.where(tf.not_equal(lengths_true_flatten, 0))
+    indices = tf.where(tf.logical_and(tf.not_equal(lengths_true_flatten, 0), lengths_true_flatten <= lengths_pred_flatten))
     y_true_flatten = tf.gather_nd(y_true_flatten, indices)
     y_pred_flatten = tf.gather_nd(y_pred_flatten, indices)
     lengths_true_flatten = tf.gather_nd(lengths_true_flatten, indices)
     lengths_pred_flatten = tf.gather_nd(lengths_pred_flatten, indices)
-    y_true_flatten = tf.keras.backend.ctc_label_dense_to_sparse(y_true_flatten, lengths_true_flatten)
-    return tf.expand_dims(tf.nn.ctc_loss(y_true_flatten, y_pred_flatten, lengths_true_flatten, time_major=False), axis=1)
+    loss = tf.keras.backend.ctc_batch_cost(y_true_flatten, y_pred_flatten, lengths_pred_flatten, lengths_true_flatten)
+    return loss
 
 
 def decode_ocr(args):
@@ -473,7 +473,7 @@ def decode_ocr(args):
     x = tf.reshape(ocr_predictions, [shape[0] * shape[1], shape[2], shape[3]])
     lengths = tf.reshape(lengths, [-1])
     decoded, probas = tf.keras.backend.ctc_decode(x, lengths)
-    return tf.reshape(decoded, [shape[0], shape[1], shape[2], -1])
+    return tf.reshape(decoded, [shape[0], shape[1], -1])
 
 
 def main():
@@ -482,7 +482,7 @@ def main():
     parser.add_argument('--eval', action='store_true')
     args = parser.parse_args()
 
-    sequence = Sequence('data/train', batch_size=8)
+    sequence = Sequence('data/test', batch_size=8)
 
     if not args.eval:
         model, prediction_model = create_models(sequence)
@@ -491,7 +491,7 @@ def main():
             tf.keras.callbacks.TensorBoard(),
         ]
         model.summary()
-        model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=1, use_multiprocessing=False)
+        model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=4, use_multiprocessing=True)
         model.save_weights("weights.h5")
     else:
         from PIL import ImageDraw
@@ -500,12 +500,19 @@ def main():
         prediction_model.load_weights("weights.h5", by_name=True)
         inputs, _ = sequence[0]
         images = inputs['images']
+        texts = inputs['texts']
         i = np.random.randint(0, 7)
-        boxes, ocr = prediction_model.predict(images)
+        boxes, ocrs = prediction_model.predict(images)
         img = Image.fromarray(images[i].astype(np.uint8))
         draw = ImageDraw.Draw(img)
-        for box in boxes[i]:
-            print(box)
+        for box, ocr, text in zip(boxes[i], ocrs[i], texts[i]):
+            decoded = []
+            for c in ocr:
+                if c == -1:
+                    break
+                decoded.append(datagen.idx2char(c))
+            print('decoded >', ''.join(decoded))
+            print('label   >', ''.join(datagen.idx2char(c) for c in text if c != 0))
             draw.rectangle(list(box[1:]), outline='red')
         del draw
         img.show()
