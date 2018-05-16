@@ -132,8 +132,6 @@ class Sequence(tf.keras.utils.Sequence):
             box_targets.append(self.encode(boxes, self.input_size))
         box_targets = np.array(box_targets)
 
-        print(np.array([0] * images.shape[0]).shape)
-
         return dict(images=images, boxes=self.bounding_boxes[start:end], texts=self.texts[start:end]), dict(positions=box_targets, ocr=np.zeros((images.shape[0])))
 
     def encode(self, boxes: np.ndarray, input_size: np.ndarray):
@@ -455,7 +453,7 @@ def calc_ocr_loss(args):
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
     lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
     y_true_flatten = tf.keras.backend.ctc_label_dense_to_sparse(y_true_flatten, lengths_true_flatten)
-    return tf.nn.ctc_loss(y_true_flatten, y_pred_flatten, lengths_true_flatten, time_major=False)
+    return tf.expand_dims(tf.nn.ctc_loss(y_true_flatten, y_pred_flatten, lengths_true_flatten, time_major=False), axis=1)
 
 
 def main():
