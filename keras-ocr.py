@@ -452,6 +452,11 @@ def calc_ocr_loss(args):
     y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
     lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
+    indices = tf.where(tf.not_equal(lengths_true_flatten, 0))
+    y_true_flatten = tf.gather_nd(y_true_flatten, indices)
+    y_pred_flatten = tf.gather_nd(y_pred_flatten, indices)
+    lengths_true_flatten = tf.gather_nd(lengths_true_flatten, indices)
+    lengths_pred_flatten = tf.gather_nd(lengths_pred_flatten, indices)
     y_true_flatten = tf.keras.backend.ctc_label_dense_to_sparse(y_true_flatten, lengths_true_flatten)
     return tf.expand_dims(tf.nn.ctc_loss(y_true_flatten, y_pred_flatten, lengths_true_flatten, time_major=False), axis=1)
 
@@ -471,7 +476,7 @@ def main():
             tf.keras.callbacks.TensorBoard(),
         ]
         model.summary()
-        model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=4, use_multiprocessing=True)
+        model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=1, use_multiprocessing=False)
         model.save_weights("weights.h5")
     else:
         from PIL import ImageDraw
