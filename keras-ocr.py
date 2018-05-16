@@ -319,6 +319,14 @@ def roi_pooling_in_batch(feature_maps: tf.Tensor, boxes: tf.Tensor, height: int)
     return tf.map_fn(mapper, tf.range(tf.shape(feature_maps)[0]), dtype=tf.float32)
 
 
+def roi_pooling_lengths_in_batch(boxes, height):
+    base_widths = boxes[..., 2] - boxes[..., 0]
+    base_heights = boxes[..., 3] - boxes[..., 1]
+    aspects = base_widths / base_heights
+    widths = tf.ceil(aspects * float(height))
+    return tf.cast(tf.where(tf.equal(base_heights, 0.0), tf.zeros_like(widths), widths), tf.int32)
+
+
 def bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
     '''
     Args:
@@ -387,7 +395,7 @@ def create_models(sequence):
     boxes = tf.keras.Input(shape=(20, 4), name='boxes')
     texts = tf.keras.Input(shape=(20, 80), name='texts', dtype=tf.int32)
     pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, boxes])
-    box_lengths = tf.keras.layers.Lambda(lambda pooled: tf.reduce_sum(tf.cast(tf.reduce_any(tf.reduce_any(tf.not_equal(pooled, 0), axis=4), axis=2), tf.int32), axis=2))(pooled)
+    box_lengths = tf.keras.layers.Lambda(lambda boxes: roi_pooling_lengths_in_batch(boxes, 4))(boxes)
     ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(pooled)
     ocr_loss = tf.keras.layers.Lambda(calc_ocr_loss, name='ocr')([box_lengths, texts, ocr_prediction])
 
@@ -398,7 +406,7 @@ def create_models(sequence):
     reconstructed_boxes = tf.keras.layers.Lambda(
         lambda x: reconstruct_bounding_boxes(anchor_boxes, x), name='boxes')(positions)
     predicted_boxes_pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, reconstructed_boxes])
-    box_lengths = tf.keras.layers.Lambda(lambda pooled: tf.reduce_sum(tf.cast(tf.reduce_any(tf.reduce_any(tf.not_equal(pooled, 0), axis=4), axis=2), tf.int32), axis=2))(predicted_boxes_pooled)
+    box_lengths = tf.keras.layers.Lambda(lambda boxes: roi_pooling_lengths_in_batch(boxes, 4))(reconstructed_boxes)
     predicted_boxes_ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(predicted_boxes_pooled)
     decoded_ocr_predictions = tf.keras.layers.Lambda(decode_ocr)([box_lengths, predicted_boxes_ocr_prediction])
     prediction_model = tf.keras.Model(images, [reconstructed_boxes, decoded_ocr_predictions])
@@ -454,7 +462,8 @@ def calc_ocr_loss(args):
     y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
     lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
-    indices = tf.where(tf.logical_and(tf.not_equal(lengths_true_flatten, 0), lengths_true_flatten <= lengths_pred_flatten))
+    # indices = tf.where(tf.logical_and(tf.not_equal(lengths_true_flatten, 0), lengths_true_flatten < lengths_pred_flatten))
+    indices = tf.where(tf.not_equal(lengths_true_flatten, 0))
     y_true_flatten = tf.gather_nd(y_true_flatten, indices)
     y_pred_flatten = tf.gather_nd(y_pred_flatten, indices)
     lengths_true_flatten = tf.gather_nd(lengths_true_flatten, indices)
@@ -482,7 +491,7 @@ def main():
     parser.add_argument('--eval', action='store_true')
     args = parser.parse_args()
 
-    sequence = Sequence('data/test', batch_size=8)
+    sequence = Sequence('data/train', batch_size=8)
 
     if not args.eval:
         model, prediction_model = create_models(sequence)
