@@ -132,7 +132,28 @@ class Sequence(tf.keras.utils.Sequence):
             box_targets.append(self.encode(boxes, self.input_size))
         box_targets = np.array(box_targets)
 
-        return dict(images=images, boxes=self.bounding_boxes[start:end], texts=self.texts[start:end]), dict(positions=box_targets, ocr=np.zeros((images.shape[0])))
+        return images, self.bounding_boxes[start:end], self.texts[start:end], box_targets
+
+    def generator(self):
+        idx = 0
+        for i, f in enumerate(self.fnames):
+            img = Image.open(os.path.join(self.root, f))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img = img.resize((304, 192))
+            img = np.array(img)
+            img_std = (img - img.mean()) / img.std()
+            position_targets = self.encode(self.bounding_boxes[i], self.input_size)
+            yield img_std, self.bounding_boxes[i], self.texts[i], position_targets
+
+    def make_input_fn(self, batch_size=16, shuffle=True):
+        def input_fn():
+            dataset = tf.data.Dataset.from_generator(self.generator, (tf.float32, tf.float32, tf.int32, tf.float32), (tf.TensorShape([INPUT_SIZE[1], INPUT_SIZE[0], 3]), tf.TensorShape([self.max_boxes, 4]), tf.TensorShape([self.max_boxes, self.max_characters]), tf.TensorShape([FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5])))
+            if shuffle:
+                dataset = dataset.shuffle(512)
+            images, boxes, texts, positions = dataset.batch(batch_size).make_one_shot_iterator().get_next()
+            return dict(images=images), dict(boxes=boxes, texts=texts, positions=positions)
+        return input_fn
 
     def encode(self, boxes: np.ndarray, input_size: np.ndarray):
         '''
@@ -187,35 +208,30 @@ class Sequence(tf.keras.utils.Sequence):
 
 
 def _bottleneck(inputs, channels, strides):
-    x = tf.keras.Sequential([
-        tf.keras.layers.Conv2D(channels, kernel_size=1, use_bias=False),
-        GroupNormalization(channels // 4),
-        tf.keras.layers.Activation(tf.keras.activations.relu),
-        tf.keras.layers.Conv2D(channels, kernel_size=3,
-                               strides=strides, use_bias=False, padding='same'),
-        GroupNormalization(channels // 4),
-        tf.keras.layers.Activation(tf.keras.activations.relu),
-        tf.keras.layers.Conv2D(2 * channels, kernel_size=1, use_bias=False),
-        GroupNormalization(channels // 4),
-    ])(inputs)
+    x = inputs
+    x = tf.keras.layers.Conv2D(channels, kernel_size=1, use_bias=False)(x)
+    x = GroupNormalization(channels // 4)(x)
+    x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
+    x = tf.keras.layers.Conv2D(channels, kernel_size=3,
+                           strides=strides, use_bias=False, padding='same')(x)
+    x = GroupNormalization(channels // 4)(x)
+    x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
+    x = tf.keras.layers.Conv2D(2 * channels, kernel_size=1, use_bias=False)(x)
+    x = GroupNormalization(channels // 4)(x)
     if strides != 1 or inputs.shape[-1] != x.shape[-1]:
-        res = tf.keras.Sequential([
-            tf.keras.layers.Conv2D(
-                2 * channels, kernel_size=1, strides=strides, use_bias=False),
-            GroupNormalization(channels // 4),
-        ])(inputs)
+        y = tf.keras.layers.Conv2D(
+            2 * channels, kernel_size=1, strides=strides, use_bias=False)(inputs)
+        res = GroupNormalization(channels // 4)(y)
         x = tf.keras.layers.Add()([x, res])
     return tf.keras.layers.Activation(tf.keras.activations.relu)(x)
 
 
 def feature_extract(inputs):
-    c1 = tf.keras.Sequential([
-        tf.keras.layers.Conv2D(64, kernel_size=3, strides=1,
-                               padding='same', use_bias=False),
-        GroupNormalization(32),
-        tf.keras.layers.Activation(tf.keras.activations.relu),
-        tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same'),
-    ])(inputs)
+    x = tf.keras.layers.Conv2D(64, kernel_size=3, strides=1,
+                           padding='same', use_bias=False)(inputs)
+    x = GroupNormalization(32)(x)
+    x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
+    c1 = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(x)
     c2 = _bottleneck(c1, 64, strides=1)
     c3 = _bottleneck(c2, 128, strides=2)
     c4 = _bottleneck(c3, 256, strides=2)
@@ -388,30 +404,50 @@ def ocr_predict(features):
     return tf.keras.backend.map_fn(mapper, features)
 
 
-def create_models(sequence):
-    images = tf.keras.Input(shape=(192, 304, 3), name='images')
-    feature_map = feature_extract(images)
-    positions = position_predict(feature_map, name='positions')
+def make_model_fn(anchor_boxes: np.ndarray):
+    def model_fn(features, labels, mode):
+        training = mode == tf.estimator.ModeKeys.TRAIN
+        images = features['images']
+        feature_map = feature_extract(images)
+        positions = position_predict(feature_map, name='positions')
 
-    boxes = tf.keras.Input(shape=(20, 4), name='boxes')
-    texts = tf.keras.Input(shape=(20, 80), name='texts', dtype=tf.int32)
-    pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, boxes])
-    box_lengths = tf.keras.layers.Lambda(lambda boxes: roi_pooling_lengths_in_batch(boxes, 4))(boxes)
-    ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(pooled)
-    ocr_loss = tf.keras.layers.Lambda(calc_ocr_loss, name='ocr')([box_lengths, texts, ocr_prediction])
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            reconstructed_boxes = reconstruct_bounding_boxes(anchor_boxes, positions)
+            predicted_boxes_pooled = roi_pooling_in_batch(feature_map, reconstructed_boxes, 4)
+            box_lengths = roi_pooling_lengths_in_batch(reconstructed_boxes, 4)
+            ocr_prediction = ocr_predict(predicted_boxes_pooled)
+            decoded_ocr_predictions = decode_ocr(box_lengths, ocr_prediction)
+            predictions = {
+                'images': images,
+                'box_confidences': reconstructed_boxes[..., 0],
+                'boxes': reconstructed_boxes[..., 1:],
+                'ocr': decoded_ocr_predictions,
+                    }
+            return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
-    train_model = tf.keras.Model([images, boxes, texts], [positions, ocr_loss])
-    train_model.compile(optimizer='adam', loss=dict(positions=loss_positions, ocr=lambda y_true, y_pred: y_pred), loss_weights=dict(positions=1, ocr=1))
+        true_boxes = labels['boxes']
+        true_texts = labels['texts']
+        true_positions = labels['positions']
+        pooled = roi_pooling_in_batch(feature_map, true_boxes, 4)
+        box_lengths = roi_pooling_lengths_in_batch(true_boxes, 4)
+        ocr_prediction = ocr_predict(pooled)
 
-    anchor_boxes = sequence.anchor_boxes
-    reconstructed_boxes = tf.keras.layers.Lambda(
-        lambda x: reconstruct_bounding_boxes(anchor_boxes, x), name='boxes')(positions)
-    predicted_boxes_pooled = tf.keras.layers.Lambda(lambda args: roi_pooling_in_batch(args[0], args[1], 4))([feature_map, reconstructed_boxes])
-    box_lengths = tf.keras.layers.Lambda(lambda boxes: roi_pooling_lengths_in_batch(boxes, 4))(reconstructed_boxes)
-    predicted_boxes_ocr_prediction = tf.keras.layers.Lambda(ocr_predict)(predicted_boxes_pooled)
-    decoded_ocr_predictions = tf.keras.layers.Lambda(decode_ocr)([box_lengths, predicted_boxes_ocr_prediction])
-    prediction_model = tf.keras.Model(images, [reconstructed_boxes, decoded_ocr_predictions])
-    return train_model, prediction_model
+        position_loss = loss_positions(true_positions, positions)
+        ocr_loss = calc_ocr_loss(box_lengths, true_texts, ocr_prediction)
+        tf.summary.scalar('position_loss', position_loss)
+        tf.summary.scalar('ocr_loss', ocr_loss)
+        loss = position_loss + ocr_loss
+
+        if mode == tf.estimator.ModeKeys.EVAL:
+            return tf.estimator.EstimatorSpec(mode, loss=loss, eval_metric_ops=dict())
+
+        optimizer = tf.train.AdadeltaOptimizer()
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
+        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
+
+    return model_fn
 
 
 def weighted_binary_cross_entropy(output, target, weights):
@@ -449,8 +485,7 @@ def loss_positions(targets: tf.Tensor, preds: tf.Tensor):
     return loss
 
 
-def calc_ocr_loss(args):
-    lengths_pred, y_true, y_pred = args
+def calc_ocr_loss(lengths_pred, y_true, y_pred):
     '''
     Args:
         y_true: [#batch, #max_boxes, #max_length]
@@ -470,11 +505,10 @@ def calc_ocr_loss(args):
     lengths_true_flatten = tf.gather_nd(lengths_true_flatten, indices)
     lengths_pred_flatten = tf.gather_nd(lengths_pred_flatten, indices)
     loss = tf.keras.backend.ctc_batch_cost(y_true_flatten, y_pred_flatten, lengths_pred_flatten, lengths_true_flatten)
-    return loss
+    return tf.reduce_mean(loss)
 
 
-def decode_ocr(args):
-    lengths, ocr_predictions = args
+def decode_ocr(lengths, ocr_predictions):
     '''
     Args:
         ocr_predictions: [#batch, #boxes, #max_time, #char]
@@ -492,43 +526,48 @@ def main():
     parser.add_argument('--eval', action='store_true')
     args = parser.parse_args()
 
-    sequence = Sequence('data/train', batch_size=8)
+    sequence = Sequence('data/test', batch_size=8)
+    model_fn = make_model_fn(sequence.anchor_boxes)
+    config = tf.estimator.RunConfig(
+            model_dir='checkpoint',
+            save_checkpoints_secs=10,
+            )
+    estimator = tf.estimator.Estimator(model_fn=model_fn, config=config)
 
     if not args.eval:
-        model, prediction_model = create_models(sequence)
-        callbacks = [
-            tf.keras.callbacks.ModelCheckpoint("checkpoint.h5"),
-            tf.keras.callbacks.TensorBoard(),
-        ]
-        model.summary()
-        model.fit_generator(sequence, callbacks=callbacks, epochs=100, workers=4, use_multiprocessing=True)
-        model.save_weights("weights.h5")
+        train_spec = tf.estimator.TrainSpec(
+                input_fn=Sequence('data/train').make_input_fn(batch_size=16),
+                max_steps=100000,
+                hooks=[tf.train.StepCounterHook(every_n_steps=10, output_dir='checkpoint')],
+                )
+        eval_spec = tf.estimator.EvalSpec(input_fn=Sequence('data/test').make_input_fn(batch_size=16))
+
+        tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
     else:
         from PIL import ImageDraw
 
-        _, prediction_model = create_models(sequence)
-        prediction_model.load_weights("weights.h5", by_name=True)
-        inputs, _ = sequence[0]
-        images = inputs['images']
-        texts = inputs['texts']
-        i = np.random.randint(0, 7)
-        boxes, ocrs = prediction_model.predict(images)
-        img = Image.fromarray(images[i].astype(np.uint8))
-        draw = ImageDraw.Draw(img)
-        print(texts[i])
-        for box, ocr in zip(boxes[i], ocrs[i]):
-            if box.sum() == 0:
-                break
-            decoded = []
-            for c in ocr:
-                if c == -1:
+        input_fn = Sequence('data/test').make_input_fn()
+        for i, predictions in enumerate(estimator.predict(input_fn)):
+            image = predictions['images']
+            box_confidences = predictions['box_confidences']
+            boxes = predictions['boxes']
+            ocrs = predictions['ocr']
+            img = Image.fromarray(image.astype(np.uint8))
+            draw = ImageDraw.Draw(img)
+            print('=========')
+            for confidence, box, ocr in zip(box_confidences, boxes, ocrs):
+                if box.sum() == 0:
                     break
-                decoded.append(datagen.idx2char(c))
-            print('decoded >', ''.join(decoded))
-            draw.rectangle(list(box[1:]), outline='red')
-        del draw
-        img.show()
-        img.save('foo.png')
+                decoded = []
+                for c in ocr:
+                    if c == -1:
+                        break
+                    decoded.append(datagen.idx2char(c))
+                print('confidence >', confidence)
+                print('decoded >', ''.join(decoded))
+                draw.rectangle(list(box), outline='red')
+            del draw
+            print(img.save(f'out/{i}.png'))
 
 
 if __name__ == '__main__':
