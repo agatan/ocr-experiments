@@ -515,14 +515,16 @@ def main():
         boxes, ocrs = prediction_model.predict(images)
         img = Image.fromarray(images[i].astype(np.uint8))
         draw = ImageDraw.Draw(img)
-        for box, ocr, text in zip(boxes[i], ocrs[i], texts[i]):
+        print(texts[i])
+        for box, ocr in zip(boxes[i], ocrs[i]):
+            if box.sum() == 0:
+                break
             decoded = []
             for c in ocr:
                 if c == -1:
                     break
                 decoded.append(datagen.idx2char(c))
             print('decoded >', ''.join(decoded))
-            print('label   >', ''.join(datagen.idx2char(c) for c in text if c != 0))
             draw.rectangle(list(box[1:]), outline='red')
         del draw
         img.show()
