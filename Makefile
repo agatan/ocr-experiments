@@ -1,4 +1,4 @@
-ifdef CUDA_VERSION
+ifdef GPU
 	PLATFORM_SPECIFIED_REQUIREMENTS=requirements-gpu.txt
 else
 	PLATFORM_SPECIFIED_REQUIREMENTS=requirements-cpu.txt

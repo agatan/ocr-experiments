@@ -105,3 +105,5 @@ test/
 vendor/
 data/
 checkpoint/
+logs/
+*.h5
