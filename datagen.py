@@ -6,10 +6,11 @@ import numpy as np
 
 
 def _charset():
-    alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
+    # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
     digits =  list('0123456789')
-    hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
-    return alphas + digits + hiras
+    # hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
+    # return alphas + digits + hiras
+    return digits
 
 CHARSET = _charset()
 CHAR2IDX = {c: i + 1 for i, c in enumerate(CHARSET)}
@@ -26,7 +27,7 @@ def idx2char(i):
     return CHARSET[i - 1]
 
 def random_fontname():
-    fonts = list(glob.glob("/Users/naomichi/Library/Fonts/*.ttf"))
+    fonts = list(glob.glob("/usr/share/fonts/truetype/ubuntu-font-family/*.ttf"))
     return np.random.choice(fonts)
 
 
@@ -83,7 +84,7 @@ def main():
     if not os.path.isdir(args.o):
         os.makedirs(args.o)
     for i in tqdm(range(0, args.n), total=args.n):
-        image, boxes = make_image(300, 200, (255, 255, 255))
+        image, boxes = make_image(304, 192, (255, 255, 255))
         with open(os.path.join(args.o, f'{i}.json'), 'w') as f:
             json.dump(dict(file=f'{i}.png', boxes=boxes), f)
         with open(os.path.join(args.o, f'{i}.png'), 'wb') as f:
