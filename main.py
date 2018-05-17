@@ -140,7 +140,7 @@ class Sequence(tf.keras.utils.Sequence):
             img = Image.open(os.path.join(self.root, f))
             if img.mode != 'RGB':
                 img = img.convert('RGB')
-            img = img.resize((304, 192))
+            # img = img.resize((304, 192))
             img = np.array(img)
             img_std = (img - img.mean()) / img.std()
             position_targets = self.encode(
