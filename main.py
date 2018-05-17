@@ -445,8 +445,8 @@ def make_model_fn(anchor_boxes: np.ndarray):
 
         position_loss = loss_positions(true_positions, positions)
         ocr_loss = calc_ocr_loss(box_lengths, true_texts, ocr_prediction)
-        tf.summary.scalar('position_loss', position_loss)
-        tf.summary.scalar('ocr_loss', ocr_loss)
+        tf.summary.scalar('loss/position_loss', position_loss)
+        tf.summary.scalar('loss/ocr_loss', ocr_loss)
         loss = position_loss + ocr_loss
 
         if mode == tf.estimator.ModeKeys.EVAL:
@@ -491,8 +491,8 @@ def loss_positions(targets: tf.Tensor, preds: tf.Tensor):
         targets, preds, reduction=tf.losses.Reduction.NONE), axis=1)
     loss_mean = tf.reduce_sum(
         loss_loc * tf.cast(mask, tf.float32)) / tf.reduce_sum(tf.cast(mask, tf.float32))
-    tf.summary.scalar('loss_conf', loss_conf)
-    tf.summary.scalar('loss_location', loss_mean)
+    tf.summary.scalar('loss/position_loss/confidence', loss_conf)
+    tf.summary.scalar('loss/position_loss/bounding_box', loss_mean)
     loss = loss_conf + 3 * loss_mean
     return loss
 
@@ -553,9 +553,9 @@ def main():
     if not args.eval:
         train_spec = tf.estimator.TrainSpec(
             input_fn=Sequence('data/train').make_input_fn(batch_size=16),
-            max_steps=100000,
+            max_steps=1000000,
             hooks=[tf.train.StepCounterHook(
-                every_n_steps=10, output_dir='checkpoint')],
+                every_n_steps=100, output_dir='checkpoint')],
         )
         eval_spec = tf.estimator.EvalSpec(input_fn=Sequence(
             'data/test').make_input_fn(batch_size=16))
