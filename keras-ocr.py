@@ -324,7 +324,8 @@ def roi_pooling_lengths_in_batch(boxes, height):
     base_heights = boxes[..., 3] - boxes[..., 1]
     aspects = base_widths / base_heights
     widths = tf.ceil(aspects * float(height))
-    return tf.cast(tf.where(tf.equal(base_heights, 0.0), tf.zeros_like(widths), widths), tf.int32)
+    zeroed = tf.where(tf.equal(base_heights, 0.0), tf.zeros_like(widths), widths)
+    return tf.cast(tf.minimum(zeroed, 80.0), tf.int32)
 
 
 def bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
@@ -462,8 +463,8 @@ def calc_ocr_loss(args):
     y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
     lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
-    # indices = tf.where(tf.logical_and(tf.not_equal(lengths_true_flatten, 0), lengths_true_flatten < lengths_pred_flatten))
-    indices = tf.where(tf.not_equal(lengths_true_flatten, 0))
+    indices = tf.where(tf.logical_and(tf.not_equal(lengths_true_flatten, 0), lengths_true_flatten < lengths_pred_flatten))
+    # indices = tf.where(tf.not_equal(lengths_true_flatten, 0))
     y_true_flatten = tf.gather_nd(y_true_flatten, indices)
     y_pred_flatten = tf.gather_nd(y_pred_flatten, indices)
     lengths_true_flatten = tf.gather_nd(lengths_true_flatten, indices)
@@ -481,7 +482,7 @@ def decode_ocr(args):
     shape = tf.shape(ocr_predictions)
     x = tf.reshape(ocr_predictions, [shape[0] * shape[1], shape[2], shape[3]])
     lengths = tf.reshape(lengths, [-1])
-    decoded, probas = tf.keras.backend.ctc_decode(x, lengths)
+    decoded, probas = tf.keras.backend.ctc_decode(x, lengths, greedy=False)
     return tf.reshape(decoded, [shape[0], shape[1], -1])
 
 
