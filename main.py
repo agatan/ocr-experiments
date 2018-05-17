@@ -143,15 +143,18 @@ class Sequence(tf.keras.utils.Sequence):
             img = img.resize((304, 192))
             img = np.array(img)
             img_std = (img - img.mean()) / img.std()
-            position_targets = self.encode(self.bounding_boxes[i], self.input_size)
+            position_targets = self.encode(
+                self.bounding_boxes[i], self.input_size)
             yield img_std, self.bounding_boxes[i], self.texts[i], position_targets
 
     def make_input_fn(self, batch_size=16, shuffle=True):
         def input_fn():
-            dataset = tf.data.Dataset.from_generator(self.generator, (tf.float32, tf.float32, tf.int32, tf.float32), (tf.TensorShape([INPUT_SIZE[1], INPUT_SIZE[0], 3]), tf.TensorShape([self.max_boxes, 4]), tf.TensorShape([self.max_boxes, self.max_characters]), tf.TensorShape([FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5])))
+            dataset = tf.data.Dataset.from_generator(self.generator, (tf.float32, tf.float32, tf.int32, tf.float32), (tf.TensorShape([INPUT_SIZE[1], INPUT_SIZE[0], 3]), tf.TensorShape([
+                                                     self.max_boxes, 4]), tf.TensorShape([self.max_boxes, self.max_characters]), tf.TensorShape([FEATURE_SIZE[1], FEATURE_SIZE[0], 9 * 5])))
             if shuffle:
                 dataset = dataset.shuffle(512)
-            images, boxes, texts, positions = dataset.batch(batch_size).make_one_shot_iterator().get_next()
+            images, boxes, texts, positions = dataset.batch(
+                batch_size).make_one_shot_iterator().get_next()
             return dict(images=images), dict(boxes=boxes, texts=texts, positions=positions)
         return input_fn
 
@@ -213,7 +216,7 @@ def _bottleneck(inputs, channels, strides):
     x = GroupNormalization(channels // 4)(x)
     x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
     x = tf.keras.layers.Conv2D(channels, kernel_size=3,
-                           strides=strides, use_bias=False, padding='same')(x)
+                               strides=strides, use_bias=False, padding='same')(x)
     x = GroupNormalization(channels // 4)(x)
     x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
     x = tf.keras.layers.Conv2D(2 * channels, kernel_size=1, use_bias=False)(x)
@@ -228,7 +231,7 @@ def _bottleneck(inputs, channels, strides):
 
 def feature_extract(inputs):
     x = tf.keras.layers.Conv2D(64, kernel_size=3, strides=1,
-                           padding='same', use_bias=False)(inputs)
+                               padding='same', use_bias=False)(inputs)
     x = GroupNormalization(32)(x)
     x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
     c1 = tf.keras.layers.MaxPooling2D(pool_size=3, strides=2, padding='same')(x)
@@ -302,7 +305,9 @@ def roi_pooling(image: tf.Tensor, boxes: tf.Tensor, height):
     max_width = 80
 
     def mapper(box):
-        cond = tf.logical_and(tf.reduce_any(tf.not_equal(box, 0)), tf.logical_and(box[2] > box[0], box[3] > box[1]))
+        cond = tf.logical_and(tf.reduce_any(tf.not_equal(
+            box, 0)), tf.logical_and(box[2] > box[0], box[3] > box[1]))
+
         def then_branch():
             base_width = box[2] - box[0]
             base_height = box[3] - box[1]
@@ -318,6 +323,7 @@ def roi_pooling(image: tf.Tensor, boxes: tf.Tensor, height):
                 pooled, [[0, 0], [0, max_width - tf.cast(width, tf.int32)], [0, 0]])
             padded.set_shape((height, max_width, None))
             return padded
+
         def else_branch():
             return tf.zeros((height, max_width, tf.shape(image)[-1]))
         return tf.cond(cond, then_branch, else_branch)
@@ -340,7 +346,8 @@ def roi_pooling_lengths_in_batch(boxes, height):
     base_heights = boxes[..., 3] - boxes[..., 1]
     aspects = base_widths / base_heights
     widths = tf.ceil(aspects * float(height))
-    zeroed = tf.where(tf.equal(base_heights, 0.0), tf.zeros_like(widths), widths)
+    zeroed = tf.where(tf.equal(base_heights, 0.0),
+                      tf.zeros_like(widths), widths)
     return tf.cast(tf.minimum(zeroed, 80.0), tf.int32)
 
 
@@ -390,7 +397,8 @@ def ocr_predict(features):
     def mapper(feature):
         def block(x, channels):
             return tf.keras.Sequential([
-                tf.keras.layers.Conv2D(channels, kernel_size=3, strides=1, padding='same'),
+                tf.keras.layers.Conv2D(
+                    channels, kernel_size=3, strides=1, padding='same'),
                 GroupNormalization(groups=channels // 4),
                 tf.keras.layers.Activation(tf.keras.activations.relu),
                 tf.keras.layers.MaxPooling2D((2, 1), strides=(2, 1)),
@@ -398,7 +406,8 @@ def ocr_predict(features):
         x = feature
         for c in [128, 256]:
             x = block(x, c)
-        x = tf.keras.layers.Conv2D(len(datagen.CHAR2IDX) + 2, kernel_size=3, strides=1, padding='same')(x)
+        x = tf.keras.layers.Conv2D(
+            len(datagen.CHAR2IDX) + 2, kernel_size=3, strides=1, padding='same')(x)
         x = tf.keras.layers.Softmax()(x)
         return tf.keras.backend.squeeze(x, axis=1)
     return tf.keras.backend.map_fn(mapper, features)
@@ -412,8 +421,10 @@ def make_model_fn(anchor_boxes: np.ndarray):
         positions = position_predict(feature_map, name='positions')
 
         if mode == tf.estimator.ModeKeys.PREDICT:
-            reconstructed_boxes = reconstruct_bounding_boxes(anchor_boxes, positions)
-            predicted_boxes_pooled = roi_pooling_in_batch(feature_map, reconstructed_boxes, 4)
+            reconstructed_boxes = reconstruct_bounding_boxes(
+                anchor_boxes, positions)
+            predicted_boxes_pooled = roi_pooling_in_batch(
+                feature_map, reconstructed_boxes, 4)
             box_lengths = roi_pooling_lengths_in_batch(reconstructed_boxes, 4)
             ocr_prediction = ocr_predict(predicted_boxes_pooled)
             decoded_ocr_predictions = decode_ocr(box_lengths, ocr_prediction)
@@ -422,7 +433,7 @@ def make_model_fn(anchor_boxes: np.ndarray):
                 'box_confidences': reconstructed_boxes[..., 0],
                 'boxes': reconstructed_boxes[..., 1:],
                 'ocr': decoded_ocr_predictions,
-                    }
+            }
             return tf.estimator.EstimatorSpec(mode, predictions=predictions)
 
         true_boxes = labels['boxes']
@@ -444,7 +455,8 @@ def make_model_fn(anchor_boxes: np.ndarray):
         optimizer = tf.train.AdadeltaOptimizer()
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(update_ops):
-            train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
+            train_op = optimizer.minimize(
+                loss, global_step=tf.train.get_global_step())
         return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
     return model_fn
@@ -493,18 +505,22 @@ def calc_ocr_loss(lengths_pred, y_true, y_pred):
         lengths_true: [#batch, #max_boxes]
         lengths_pred: [#batch, #max_boxes]
     '''
-    lengths_true = tf.reduce_sum(tf.cast(tf.not_equal(y_true, 0), tf.int32), axis=2)
+    lengths_true = tf.reduce_sum(
+        tf.cast(tf.not_equal(y_true, 0), tf.int32), axis=2)
     y_true_flatten = tf.reshape(y_true, [-1, tf.shape(y_true)[-1]])
-    y_pred_flatten = tf.reshape(y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
+    y_pred_flatten = tf.reshape(
+        y_pred, [-1, tf.shape(y_pred)[-2], tf.shape(y_pred)[-1]])
     lengths_true_flatten = tf.reshape(lengths_true, [-1])
     lengths_pred_flatten = tf.reshape(lengths_pred, [-1])
-    indices = tf.where(tf.logical_and(tf.not_equal(lengths_true_flatten, 0), lengths_true_flatten < lengths_pred_flatten))
+    indices = tf.where(tf.logical_and(tf.not_equal(
+        lengths_true_flatten, 0), lengths_true_flatten < lengths_pred_flatten))
     # indices = tf.where(tf.not_equal(lengths_true_flatten, 0))
     y_true_flatten = tf.gather_nd(y_true_flatten, indices)
     y_pred_flatten = tf.gather_nd(y_pred_flatten, indices)
     lengths_true_flatten = tf.gather_nd(lengths_true_flatten, indices)
     lengths_pred_flatten = tf.gather_nd(lengths_pred_flatten, indices)
-    loss = tf.keras.backend.ctc_batch_cost(y_true_flatten, y_pred_flatten, lengths_pred_flatten, lengths_true_flatten)
+    loss = tf.keras.backend.ctc_batch_cost(
+        y_true_flatten, y_pred_flatten, lengths_pred_flatten, lengths_true_flatten)
     return tf.reduce_mean(loss)
 
 
@@ -529,18 +545,20 @@ def main():
     sequence = Sequence('data/test', batch_size=8)
     model_fn = make_model_fn(sequence.anchor_boxes)
     config = tf.estimator.RunConfig(
-            model_dir='checkpoint',
-            save_checkpoints_secs=10,
-            )
+        model_dir='checkpoint',
+        save_checkpoints_secs=10,
+    )
     estimator = tf.estimator.Estimator(model_fn=model_fn, config=config)
 
     if not args.eval:
         train_spec = tf.estimator.TrainSpec(
-                input_fn=Sequence('data/train').make_input_fn(batch_size=16),
-                max_steps=100000,
-                hooks=[tf.train.StepCounterHook(every_n_steps=10, output_dir='checkpoint')],
-                )
-        eval_spec = tf.estimator.EvalSpec(input_fn=Sequence('data/test').make_input_fn(batch_size=16))
+            input_fn=Sequence('data/train').make_input_fn(batch_size=16),
+            max_steps=100000,
+            hooks=[tf.train.StepCounterHook(
+                every_n_steps=10, output_dir='checkpoint')],
+        )
+        eval_spec = tf.estimator.EvalSpec(input_fn=Sequence(
+            'data/test').make_input_fn(batch_size=16))
 
         tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
     else:
