@@ -11,12 +11,6 @@ for line in sys.stdin:
 endef
 
 export PRINT_HELP_PYSCRIPT
-export PROJECT_NAME=bboxnet
-export IMAGE_NAME=wantedly/$(PROJECT_NAME)
-export CONTAINER_NAME=$(IMAGE_NAME)
-export JUPYTER_HOST_PORT=8888
-export JUPYTER_CONTAINER_PORT=8888
-
 
 .PHONY: help
 help: ## show help message
@@ -38,7 +32,7 @@ test: ## run tests in tests/ directory
 .PHONY: lint
 lint: ## run linters
 	black --diff --check --exclude venv .
-	mypy bboxnet --ignore-missing-imports
+	mypy ocr --ignore-missing-imports
 
 .PHONY: format
 format: ## format python scripts with black
@@ -58,4 +52,4 @@ dep-internal: requirements-internal.txt ## install internal dependencies
 
 .PHONY: train
 train: ## run training script and sync the models and data to s3
-	python -m bboxnet.models.train
+	python -m ocr.models.train

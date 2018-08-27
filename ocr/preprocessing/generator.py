@@ -15,9 +15,14 @@ class Generator(object):
         assert input_size[0] % features_pixel == 0
         assert input_size[1] % features_pixel == 0
         self.feature_pixel = features_pixel
-        self.feature_size = (input_size[0] // features_pixel, input_size[1] // features_pixel)
+        self.feature_size = (
+            input_size[0] // features_pixel,
+            input_size[1] // features_pixel,
+        )
 
-    def resize_entry(self, image: np.ndarray, annots: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def resize_entry(
+        self, image: np.ndarray, annots: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
         resized_image = resize_image(image, self.input_size)
         annots = annots.copy()
         x_ratio = resized_image.shape[1] / image.shape[1]
@@ -62,10 +67,18 @@ class Generator(object):
             ground_truth[ymin_floor:ymin_ceil, xmin_floor:xmin_ceil, 0] = -1
             ground_truth[ymax_floor:ymax_ceil, xmax_floor:xmax_ceil, 0] = -1
             ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 0] = 1
-            ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 1] = np.arange(xmin_ceil, xmax_floor) - xmin
-            ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 2] = np.expand_dims(np.arange(ymin_ceil, ymax_floor), axis=1) - ymin
-            ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 3] = xmax - np.arange(xmin_ceil, xmax_floor)
-            ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 4] = ymax - np.expand_dims(np.arange(ymin_ceil, ymax_floor), axis=1)
+            ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 1] = (
+                np.arange(xmin_ceil, xmax_floor) - xmin
+            )
+            ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 2] = (
+                np.expand_dims(np.arange(ymin_ceil, ymax_floor), axis=1) - ymin
+            )
+            ground_truth[
+                ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 3
+            ] = xmax - np.arange(xmin_ceil, xmax_floor)
+            ground_truth[
+                ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 4
+            ] = ymax - np.expand_dims(np.arange(ymin_ceil, ymax_floor), axis=1)
             ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 5] = annot[4]
         return ground_truth
 
@@ -80,7 +93,10 @@ class Generator(object):
                 images = np.zeros((len(targets),) + self.input_size + (3,))
                 gts = np.zeros((len(targets),) + self.feature_size + (6,))
                 for i, target in enumerate(targets):
-                    image, annots = self.load_image(target), self.load_annotation(target)
+                    image, annots = (
+                        self.load_image(target),
+                        self.load_annotation(target),
+                    )
                     image, annots = self.resize_entry(image, annots)
                     gt = self.compute_ground_truth(annots)
                     images[i, ...] = image / 255.0
@@ -91,16 +107,23 @@ class Generator(object):
 
 
 def _read_annotations(csvpath: str):
-    with open(csvpath, 'r') as fp:
+    with open(csvpath, "r") as fp:
         result = defaultdict(list)
         reader = csv.DictReader(fp)
         for i, row in enumerate(reader):
-            rrow = {col: float(row[col]) for col in ['xmin', 'xmax', 'ymin', 'ymax', 'angle']}
-            if rrow['xmax'] <= rrow['xmin'] :
-                raise ValueError(f"line {i}: xmax ({rrow['xmax']}) must be greater than xmin ({rrow['xmin']})")
-            if rrow['ymax'] <= rrow['ymin'] :
-                raise ValueError(f"line {i}: ymax ({rrow['ymax']}) must be greater than ymin ({rrow['ymin']})")
-            result[row['image']].append(rrow)
+            rrow = {
+                col: float(row[col])
+                for col in ["xmin", "xmax", "ymin", "ymax", "angle"]
+            }
+            if rrow["xmax"] <= rrow["xmin"]:
+                raise ValueError(
+                    f"line {i}: xmax ({rrow['xmax']}) must be greater than xmin ({rrow['xmin']})"
+                )
+            if rrow["ymax"] <= rrow["ymin"]:
+                raise ValueError(
+                    f"line {i}: ymax ({rrow['ymax']}) must be greater than ymin ({rrow['ymin']})"
+                )
+            result[row["image"]].append(rrow)
     return result
 
 
@@ -124,11 +147,11 @@ class CSVGenerator(Generator):
 
     def load_annotation(self, image_index: int) -> np.ndarray:
         annots = self.annotations[self.image_names[image_index]]
-        result = np.zeros((len(annots), 5)) # [#box, (xmin, ymin, xmax, ymax, angle)]
+        result = np.zeros((len(annots), 5))  # [#box, (xmin, ymin, xmax, ymax, angle)]
         for idx, annot in enumerate(annots):
-            result[idx, 0] = annot['xmin']
-            result[idx, 1] = annot['ymin']
-            result[idx, 2] = annot['xmax']
-            result[idx, 3] = annot['ymax']
-            result[idx, 4] = annot['angle'] / 90.0
+            result[idx, 0] = annot["xmin"]
+            result[idx, 1] = annot["ymin"]
+            result[idx, 2] = annot["xmax"]
+            result[idx, 3] = annot["ymax"]
+            result[idx, 4] = annot["angle"] / 90.0
         return result

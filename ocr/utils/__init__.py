@@ -1,11 +1,13 @@
-#%%
+# %%
 
 import numpy as np
 
 
 def meshgrid(x: int, y: int) -> np.ndarray:
     xx, yy = np.meshgrid(np.arange(0, x), np.arange(0, y))
-    return np.concatenate([np.expand_dims(xx, axis=2), np.expand_dims(yy, axis=2)], axis=2)
+    return np.concatenate(
+        [np.expand_dims(xx, axis=2), np.expand_dims(yy, axis=2)], axis=2
+    )
 
 
 def xywh2xyxy(boxes: np.ndarray) -> np.ndarray:
