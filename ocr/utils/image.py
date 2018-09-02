@@ -10,7 +10,7 @@ def read_image(path: str) -> np.ndarray:
 
 
 def resize_image(img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
-    return cv2.resize(img, size)
+    return cv2.resize(img, (size[1], size[0]))
 
 
 def nms(boxes, scores, thresh=0.5):

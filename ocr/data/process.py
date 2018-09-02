@@ -102,10 +102,10 @@ def _dofn(n: int, n_images: int, out: str):
         )
         for i in range(n_images):
             image, coordinates = make_image(832, 512, (255, 255, 255))
-            image_file = os.path.join(out, "images", f"{n}-{i}.jpeg")
+            image_file = os.path.join(out, "images", f"{n}-{i}.png")
             image.save(image_file)
             for coor in coordinates:
-                coor["image"] = os.path.join("images", f"{n}-{i}.jpeg")
+                coor["image"] = os.path.join("images", f"{n}-{i}.png")
             w.writerows(coordinates)
 
 

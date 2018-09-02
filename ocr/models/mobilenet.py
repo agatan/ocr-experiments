@@ -6,13 +6,15 @@ from tensorflow.python.keras.layers import (
     ReLU,
     UpSampling2D,
     Add,
-)
+    LeakyReLU, DepthwiseConv2D)
 
-
-def _deconv_block(x, filters):
-    x = Conv2D(filters, kernel_size=1)(x)
+def _deconv_block(x, filters, kernel_size=1):
+    x = DepthwiseConv2D(kernel_size=kernel_size, padding='same', use_bias=False)(x)
     x = BatchNormalization()(x)
-    x = ReLU()(x)
+    x = LeakyReLU()(x)
+    x = Conv2D(filters, kernel_size=1, use_bias=False)(x)
+    x = BatchNormalization()(x)
+    x = LeakyReLU()(x)
     return UpSampling2D()(x)
 
 
@@ -20,7 +22,11 @@ def backbone(input_shape=(512, 512, 3)):
     image = Input(shape=input_shape, name="image")
     base_model = MobileNet(input_tensor=image, include_top=False, weights=None)
     x = base_model.output
-    x = Conv2D(512, kernel_size=3, padding="same", activation="relu")(x)
-    x = Conv2D(256, kernel_size=3, padding="same", activation="relu")(x)
+    x = _deconv_block(x, 512, kernel_size=3)
+    y = base_model.layers[81].output
+    x = Add()([x, y])
+    x = _deconv_block(x, 256, kernel_size=3)
+    y = base_model.layers[39].output
+    x = Add()([x, y])
     model = Model(image, x)
-    return model, 32
+    return model, 8
