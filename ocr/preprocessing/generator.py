@@ -1,12 +1,16 @@
 import os
 import csv
+import random
 from collections import defaultdict
-from typing import Tuple
+from typing import Tuple, List
 
 import numpy as np
 
-from ocr.utils import meshgrid
+from ocr.data import process
 from ocr.utils.image import resize_image, read_image
+
+
+MAX_LENGTH = 32
 
 
 class Generator(object):
@@ -39,7 +43,10 @@ class Generator(object):
     def load_image(self, image_index: int) -> np.ndarray:
         raise NotImplementedError()
 
-    def load_annotation(self, image_index: int) -> np.ndarray:
+    def load_annotation(self, image_index: int) -> Tuple[np.ndarray, List[str]]:
+        raise NotImplementedError()
+
+    def char2idx(self, c) -> int:
         raise NotImplementedError()
 
     def compute_ground_truth(self, annots: np.ndarray) -> np.ndarray:
@@ -92,16 +99,23 @@ class Generator(object):
                 targets = indices[start_idx:end_idx]
                 images = np.zeros((len(targets),) + self.input_size + (3,))
                 gts = np.zeros((len(targets),) + self.feature_size + (6,))
+                sample_text_regions = np.zeros((len(targets), 5))
+                sample_text = np.zeros((len(targets), MAX_LENGTH, 1), dtype=np.int32)
                 for i, target in enumerate(targets):
-                    image, annots = (
+                    image, (annots, texts) = (
                         self.load_image(target),
                         self.load_annotation(target),
                     )
                     image, annots = self.resize_entry(image, annots)
+                    sample_annot_index = random.randint(0, len(annots))
+                    sample_annot = annots[sample_annot_index]
+                    sample_text_annot = np.array([[self.char2idx(c)] for c in texts[sample_annot_index]])
+                    sample_text_regions[i, ...] = sample_annot
+                    sample_text[i, :len(sample_text_annot), :] = sample_text_annot
                     gt = self.compute_ground_truth(annots)
                     images[i, ...] = image / 255.0
                     gts[i, ...] = gt
-                yield images, gts
+                yield images, [gts, sample_text_regions, sample_text]
             if not infinite:
                 break
 
@@ -123,6 +137,7 @@ def _read_annotations(csvpath: str):
                 raise ValueError(
                     f"line {i}: ymax ({rrow['ymax']}) must be greater than ymin ({rrow['ymin']})"
                 )
+            rrow['text'] = row['text']
             result[row["image"]].append(rrow)
     return result
 
@@ -148,10 +163,15 @@ class CSVGenerator(Generator):
     def load_annotation(self, image_index: int) -> np.ndarray:
         annots = self.annotations[self.image_names[image_index]]
         result = np.zeros((len(annots), 5))  # [#box, (xmin, ymin, xmax, ymax, angle)]
+        text = []
         for idx, annot in enumerate(annots):
             result[idx, 0] = annot["xmin"]
             result[idx, 1] = annot["ymin"]
             result[idx, 2] = annot["xmax"]
             result[idx, 3] = annot["ymax"]
             result[idx, 4] = annot["angle"] / 90.0
-        return result
+            text.append(annot['text'])
+        return result, text
+
+    def char2idx(self, c):
+        return process.char2idx(c)
