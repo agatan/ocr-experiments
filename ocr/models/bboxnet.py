@@ -230,6 +230,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
 
     # RoI Pooling and OCR
     roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))([x, sampled_text_region])
+    widths = Lambda(lambda x: x, name='widths')(widths)
     smashed = _text_recognition(roi, n_vocab, name='text')
 
     ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name='ctc')([smashed, labels, widths, label_length])
@@ -259,7 +260,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     # TODO(agatan): stub. goal model is Model(image, { 'bbox': nmsed_boxes, 'text': ctc_decoded_text })
     # prediction_model = Model([image, sampled_text_region, labels, label_length], { 'confidence': confidence, 'boxes': boxes, 'angles': angles, 'text': smashed })
     prediction_model = Model([image, sampled_text_region, labels, label_length],
-                             [confidence, boxes, angles, smashed])
+                             [confidence, boxes, angles, smashed, widths])
 
     return training_model, prediction_model
 
