@@ -108,7 +108,7 @@ class Generator(object):
                     )
                     image, annots = self.resize_entry(image, annots)
                     sample_annot_index = random.randint(0, len(annots)-1)
-                    sample_annot = annots[sample_annot_index]
+                    sample_annot = annots[sample_annot_index].astype('float32') / self.feature_pixel
                     sample_text_annot = np.array([[self.char2idx(c)] for c in texts[sample_annot_index]])
                     sample_text_regions[i, ...] = sample_annot
                     sample_text[i, :len(sample_text_annot), :] = sample_text_annot
