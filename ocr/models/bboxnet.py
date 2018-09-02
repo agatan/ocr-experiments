@@ -129,6 +129,8 @@ def _bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
         img: [H, W, C]
         x: [-1]
         y: [-1]
+    Returns:
+        interpolated_image: tf.Tensor. shape: (y, x, C)
     """
 
     def to_f(t):
