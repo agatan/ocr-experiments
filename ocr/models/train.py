@@ -59,12 +59,18 @@ def main():
         backbone, features_pixel = mobilenet.backbone((512, 832, 3))
     else:
         raise ValueError("Unknown backobne {}".format(args.backbone))
-    training_model = create_model(backbone, features_pixel=features_pixel, input_shape=(512, 832, 3))
+    training_model = create_model(
+        backbone, features_pixel=features_pixel, input_shape=(512, 832, 3)
+    )
     if args.weight:
         training_model.load_weights(args.weight)
 
-    gen = CSVGenerator(args.train_csv, features_pixel=features_pixel, input_size=(512, 832))
-    valid_gen = CSVGenerator(args.validation_csv, features_pixel=features_pixel, input_size=(512, 832))
+    gen = CSVGenerator(
+        args.train_csv, features_pixel=features_pixel, input_size=(512, 832)
+    )
+    valid_gen = CSVGenerator(
+        args.validation_csv, features_pixel=features_pixel, input_size=(512, 832)
+    )
     steps_per_epoch = (gen.size() - 1) // args.batch_size + 1
 
     callbacks = create_callbacks(args.checkpoint_path, args.logdir)

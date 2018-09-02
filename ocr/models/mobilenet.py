@@ -6,10 +6,13 @@ from tensorflow.python.keras.layers import (
     ReLU,
     UpSampling2D,
     Add,
-    LeakyReLU, DepthwiseConv2D)
+    LeakyReLU,
+    DepthwiseConv2D,
+)
+
 
 def _deconv_block(x, filters, kernel_size=1):
-    x = DepthwiseConv2D(kernel_size=kernel_size, padding='same', use_bias=False)(x)
+    x = DepthwiseConv2D(kernel_size=kernel_size, padding="same", use_bias=False)(x)
     x = BatchNormalization()(x)
     x = LeakyReLU()(x)
     x = Conv2D(filters, kernel_size=1, use_bias=False)(x)
