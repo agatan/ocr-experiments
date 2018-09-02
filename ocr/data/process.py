@@ -26,6 +26,10 @@ CHARSET = _charset()
 CHAR2IDX = {c: i + 1 for i, c in enumerate(CHARSET)}
 
 
+def vocab():
+    return len(CHARSET) + 2
+
+
 def char2idx(c):
     return CHAR2IDX[c]
 

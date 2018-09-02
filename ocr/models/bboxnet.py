@@ -3,7 +3,8 @@ import math
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.keras import Model
-from tensorflow.python.keras.layers import Input, Conv2D, Lambda, Activation
+from tensorflow.python.keras.layers import Input, Conv2D, Lambda, Activation, BatchNormalization, LeakyReLU, \
+    MaxPooling2D, Dense
 
 from ocr.preprocessing import generator
 
@@ -181,6 +182,8 @@ def _roi_pooling(images, boxes):
         ),
         tf.int32,
     )
+    widths = tf.to_int32(tf.ceil((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]) * _ROI_HEIGHT))
+    widths = tf.expand_dims(widths, -1)
 
     def mapper(i):
         box = boxes[i]
@@ -197,30 +200,51 @@ def _roi_pooling(images, boxes):
         return padded
 
     indices = tf.range(tf.shape(images)[0])
-    return tf.map_fn(mapper, indices, dtype=tf.float32)
+    return tf.map_fn(mapper, indices, dtype=tf.float32), widths
 
 
-def create_model(backborn, features_pixel, input_shape=(512, 512, 3)):
+def _ctc_lambda_func(args):
+    y_pred, labels, input_length, label_length = args
+    return tf.keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
+
+
+def _text_recognition(images, n_vocab):
+    x = images
+    for _ in range(int(math.log2(_ROI_HEIGHT))):
+        x = Conv2D(256, 3, padding='same', dilation_rate=2)(x)
+        x = BatchNormalization()(x)
+        x = LeakyReLU()(x)
+        x = MaxPooling2D((2, 1))(x)
+    x = Dense(n_vocab, activation='softmax')(x)
+    return Lambda(lambda x: tf.squeeze(x, 1))(x)
+
+
+def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10):
     image = Input(shape=input_shape, name="image")
     sampled_text_region = Input(shape=(5,), name="sampled_text_region")
-    sampled_text = Input(
-        shape=(generator.MAX_LENGTH, 1), name="sampled_text", dtype=tf.int32
-    )
+    labels = Input(shape=(generator.MAX_LENGTH,), name='sampled_text', dtype=tf.float32)
+    label_length = Input(shape=(1,), name='label_length', dtype=tf.int64)
+
     x = backborn(image)
-    roi = Lambda(lambda args: _roi_pooling(args[0], args[1]))([x, sampled_text_region])
-    bbox_output = Conv2D(6, kernel_size=1)(x)
-    # Model([image, sampled_text_region], roi).summary()
-    training_model = Model([image, sampled_text_region, sampled_text], bbox_output)
+    bbox_output = Conv2D(6, kernel_size=1, name='bbox')(x)
+
+    # RoI Pooling and OCR
+    roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))([x, sampled_text_region])
+    smashed = _text_recognition(roi, n_vocab)
+
+    ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name='ctc')([smashed, labels, widths, label_length])
+
+    training_model = Model([image, sampled_text_region, labels, label_length], [bbox_output, ctc_loss])
     training_model.compile(
         "adam",
-        loss=_loss,
-        metrics=[
+        loss={'bbox': _loss, 'ctc': lambda y_true, y_pred: y_pred},
+        metrics={'bbox': [
             _metric_confidence_accuracy,
             _metric_iou,
             _metric_loss_confidence,
             __loss_iou,
             _metric_loss_angle,
-        ],
+        ]},
     )
     return training_model
 

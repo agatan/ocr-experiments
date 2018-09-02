@@ -8,6 +8,7 @@ import tensorflow as tf
 from tensorflow.python import debug as tf_debug
 from tensorflow.python.debug.lib.debug_data import has_inf_or_nan
 
+from ocr.data import process
 from ocr.models import resnet50, mobilenet
 from ocr.models.bboxnet import create_model
 from ocr.preprocessing.generator import CSVGenerator
@@ -60,7 +61,7 @@ def main():
     else:
         raise ValueError("Unknown backobne {}".format(args.backbone))
     training_model = create_model(
-        backbone, features_pixel=features_pixel, input_shape=(512, 832, 3)
+        backbone, features_pixel=features_pixel, input_shape=(512, 832, 3), n_vocab=process.vocab(),
     )
     if args.weight:
         training_model.load_weights(args.weight)
