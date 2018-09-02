@@ -208,7 +208,7 @@ def _ctc_lambda_func(args):
     return tf.keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
-def _text_recognition(images, n_vocab):
+def _text_recognition(images, n_vocab, name):
     x = images
     for _ in range(int(math.log2(_ROI_HEIGHT))):
         x = Conv2D(256, 3, padding='same', dilation_rate=2)(x)
@@ -216,7 +216,7 @@ def _text_recognition(images, n_vocab):
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
     x = Dense(n_vocab, activation='softmax')(x)
-    return Lambda(lambda x: tf.squeeze(x, 1))(x)
+    return Lambda(lambda x: tf.squeeze(x, 1), name=name)(x)
 
 
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10):
@@ -230,7 +230,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
 
     # RoI Pooling and OCR
     roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))([x, sampled_text_region])
-    smashed = _text_recognition(roi, n_vocab)
+    smashed = _text_recognition(roi, n_vocab, name='text')
 
     ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name='ctc')([smashed, labels, widths, label_length])
 
@@ -246,7 +246,22 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
             _metric_loss_angle,
         ]},
     )
-    return training_model
+
+    # prediction model
+    confidence = Activation("sigmoid")(
+        Lambda(lambda x: x[..., 0:1], name="confidence")(bbox_output)
+    )
+    boxes = Lambda(
+        lambda x: _reconstruct_boxes(x[..., 1:5], features_pixel=features_pixel),
+        name="box",
+    )(bbox_output)
+    angles = Activation("tanh", name='angle')(Lambda(lambda x: x[..., 5:6])(bbox_output))
+    # TODO(agatan): stub. goal model is Model(image, { 'bbox': nmsed_boxes, 'text': ctc_decoded_text })
+    # prediction_model = Model([image, sampled_text_region, labels, label_length], { 'confidence': confidence, 'boxes': boxes, 'angles': angles, 'text': smashed })
+    prediction_model = Model([image, sampled_text_region, labels, label_length],
+                             [confidence, boxes, angles, smashed])
+
+    return training_model, prediction_model
 
 
 def create_prediction_model(model, features_pixel):
