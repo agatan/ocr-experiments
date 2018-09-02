@@ -135,7 +135,7 @@ def main():
         if f.endswith(".csv")
     ]
     with open("data/processed/annotations.csv", "w") as fp:
-        fp.write("image,xmin,ymin,xmax,ymax,angle\n")
+        fp.write("image,xmin,ymin,xmax,ymax,angle,text\n")
         for c in csvfiles:
             with open(c, "r") as cf:
                 fp.write(cf.read())
