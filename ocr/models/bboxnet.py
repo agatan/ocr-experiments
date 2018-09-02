@@ -174,7 +174,14 @@ _ROI_HEIGHT = 8
 
 
 def _roi_pooling(images, boxes):
-    max_width = tf.cast(tf.ceil(tf.reduce_max((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1])) * _ROI_HEIGHT), tf.int32)
+    max_width = tf.cast(
+        tf.ceil(
+            tf.reduce_max((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]))
+            * _ROI_HEIGHT
+        ),
+        tf.int32,
+    )
+
     def mapper(i):
         box = boxes[i]
         base_width = tf.to_float(box[2] - box[0])
@@ -188,14 +195,17 @@ def _roi_pooling(images, boxes):
         pooled = _bilinear_interpolate(images[i], xx, yy)
         padded = tf.pad(pooled, [[0, 0], [0, max_width - tf.to_int32(width)], [0, 0]])
         return padded
+
     indices = tf.range(tf.shape(images)[0])
     return tf.map_fn(mapper, indices, dtype=tf.float32)
 
 
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3)):
     image = Input(shape=input_shape, name="image")
-    sampled_text_region = Input(shape=(5,), name='sampled_text_region')
-    sampled_text = Input(shape=(generator.MAX_LENGTH, 1), name='sampled_text', dtype=tf.int32)
+    sampled_text_region = Input(shape=(5,), name="sampled_text_region")
+    sampled_text = Input(
+        shape=(generator.MAX_LENGTH, 1), name="sampled_text", dtype=tf.int32
+    )
     x = backborn(image)
     roi = Lambda(lambda args: _roi_pooling(args[0], args[1]))([x, sampled_text_region])
     bbox_output = Conv2D(6, kernel_size=1)(x)

@@ -107,11 +107,16 @@ class Generator(object):
                         self.load_annotation(target),
                     )
                     image, annots = self.resize_entry(image, annots)
-                    sample_annot_index = random.randint(0, len(annots)-1)
-                    sample_annot = annots[sample_annot_index].astype('float32') / self.feature_pixel
-                    sample_text_annot = np.array([[self.char2idx(c)] for c in texts[sample_annot_index]])
+                    sample_annot_index = random.randint(0, len(annots) - 1)
+                    sample_annot = (
+                        annots[sample_annot_index].astype("float32")
+                        / self.feature_pixel
+                    )
+                    sample_text_annot = np.array(
+                        [[self.char2idx(c)] for c in texts[sample_annot_index]]
+                    )
                     sample_text_regions[i, ...] = sample_annot
-                    sample_text[i, :len(sample_text_annot), :] = sample_text_annot
+                    sample_text[i, : len(sample_text_annot), :] = sample_text_annot
                     gt = self.compute_ground_truth(annots)
                     images[i, ...] = image / 255.0
                     gts[i, ...] = gt
@@ -137,7 +142,7 @@ def _read_annotations(csvpath: str):
                 raise ValueError(
                     f"line {i}: ymax ({rrow['ymax']}) must be greater than ymin ({rrow['ymin']})"
                 )
-            rrow['text'] = row['text']
+            rrow["text"] = row["text"]
             result[row["image"]].append(rrow)
     return result
 
@@ -170,7 +175,7 @@ class CSVGenerator(Generator):
             result[idx, 2] = annot["xmax"]
             result[idx, 3] = annot["ymax"]
             result[idx, 4] = annot["angle"] / 90.0
-            text.append(annot['text'])
+            text.append(annot["text"])
         return result, text
 
     def char2idx(self, c):
