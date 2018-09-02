@@ -101,6 +101,7 @@ class Generator(object):
                 gts = np.zeros((len(targets),) + self.feature_size + (6,))
                 sample_text_regions = np.zeros((len(targets), 5))
                 sample_text = np.zeros((len(targets), MAX_LENGTH,), dtype=np.int32)
+                sample_text[...] = process.vocab() - 1
                 label_length = np.zeros((len(targets)), dtype=np.int64)
                 for i, target in enumerate(targets):
                     image, (annots, texts) = (
