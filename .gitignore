@@ -103,7 +103,7 @@ test/
 *.pth
 *.tar.gz
 vendor/
-data/
+/data/
 checkpoint/
 logs/
 *.h5
