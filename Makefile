@@ -46,10 +46,6 @@ dep: requirements.txt  ## install dependencies
 dep-dev: requirements-dev.txt ## install development dependencies
 	pip install -r requirements-dev.txt
 
-.PHONY: dep-internal
-dep-internal: requirements-internal.txt ## install internal dependencies
-	pip install -r requirements-internal.txt
-
 .PHONY: train
 train: ## run training script and sync the models and data to s3
 	python -m ocr.models.train
