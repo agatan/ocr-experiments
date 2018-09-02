@@ -107,7 +107,7 @@ class Generator(object):
                         self.load_annotation(target),
                     )
                     image, annots = self.resize_entry(image, annots)
-                    sample_annot_index = random.randint(0, len(annots))
+                    sample_annot_index = random.randint(0, len(annots)-1)
                     sample_annot = annots[sample_annot_index]
                     sample_text_annot = np.array([[self.char2idx(c)] for c in texts[sample_annot_index]])
                     sample_text_regions[i, ...] = sample_annot
@@ -115,7 +115,7 @@ class Generator(object):
                     gt = self.compute_ground_truth(annots)
                     images[i, ...] = image / 255.0
                     gts[i, ...] = gt
-                yield images, [gts, sample_text_regions, sample_text]
+                yield [images, sample_text_regions, sample_text], gts
             if not infinite:
                 break
 

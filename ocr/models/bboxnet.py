@@ -5,6 +5,8 @@ import tensorflow as tf
 from tensorflow.python.keras import Model
 from tensorflow.python.keras.layers import Input, Conv2D, Lambda, Activation
 
+from ocr.preprocessing import generator
+
 K = tf.keras.backend
 
 
@@ -170,9 +172,11 @@ def _bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
 
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3)):
     image = Input(shape=input_shape, name="image")
+    sampled_text_region = Input(shape=(5,), name='sampled_text_region')
+    sampled_text = Input(shape=(generator.MAX_LENGTH, 1), name='sampled_text', dtype=tf.int32)
     x = backborn(image)
-    output = Conv2D(6, kernel_size=1)(x)
-    training_model = Model(image, output)
+    bbox_output = Conv2D(6, kernel_size=1)(x)
+    training_model = Model([image, sampled_text_region, sampled_text], bbox_output)
     training_model.compile(
         "adam",
         loss=_loss,
