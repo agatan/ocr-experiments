@@ -123,6 +123,53 @@ def _reconstruct_boxes(boxes, features_pixel=8):
     return features_pixel * tf.stack([left, top, right, bottom], axis=-1)
 
 
+def _bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
+    """
+    Args:
+        img: [H, W, C]
+        x: [-1]
+        y: [-1]
+    """
+
+    def to_f(t):
+        return tf.cast(t, dtype=tf.float32)
+
+    x0 = tf.cast(tf.floor(x), dtype=tf.int32)
+    x1 = x0 + 1
+    y0 = tf.cast(tf.floor(y), dtype=tf.int32)
+    y1 = y0 + 1
+
+    x0 = tf.clip_by_value(x0, 0, tf.shape(img)[1] - 1)
+    x1 = tf.clip_by_value(x1, 0, tf.shape(img)[1] - 1)
+    y0 = tf.clip_by_value(y0, 0, tf.shape(img)[0] - 1)
+    y1 = tf.clip_by_value(y1, 0, tf.shape(img)[0] - 1)
+
+    x0 = tf.Print(x0, [x0, x1, y0, y1])
+
+    img_a = tf.gather(tf.gather(img, x0, axis=1), y0, axis=0)
+    img_b = tf.gather(tf.gather(img, x1, axis=1), y0, axis=0)
+    img_c = tf.gather(tf.gather(img, x0, axis=1), y1, axis=0)
+    img_d = tf.gather(tf.gather(img, x1, axis=1), y1, axis=0)
+    img_a = tf.Print(img_a, [img_a, img_b, img_c, img_d])
+
+    def meshgrid_distance(x_distance, y_distance):
+        x, y = tf.meshgrid(x_distance, y_distance)
+        return x * y
+
+    wa = meshgrid_distance(to_f(x1) - x, to_f(y1) - y)
+    wb = meshgrid_distance(to_f(x1) - x, y - to_f(y0))
+    wc = meshgrid_distance(x - to_f(x0), to_f(y1) - y)
+    wd = meshgrid_distance(x - to_f(x0), y - to_f(y0))
+    wa = tf.Print(wa, [wa, wb, wc, wd])
+    wa = tf.expand_dims(wa, 2)
+    wb = tf.expand_dims(wb, 2)
+    wc = tf.expand_dims(wc, 2)
+    wd = tf.expand_dims(wd, 2)
+
+    flatten_interporated = img_a * wa + img_b * wb + img_c * wc + img_d * wd
+    return flatten_interporated
+
+
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3)):
     image = Input(shape=input_shape, name="image")
     x = backborn(image)
