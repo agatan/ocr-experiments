@@ -12,7 +12,7 @@ from tensorflow.python.keras.layers import (
     LeakyReLU,
     MaxPooling2D,
     Dense,
-)
+    SeparableConv2D, Dropout)
 
 from ocr.preprocessing import generator
 
@@ -236,11 +236,15 @@ def _ctc_lambda_func(args):
 def _text_recognition_model(input_shape, n_vocab, name=None):
     roi = Input(shape=input_shape, name='roi')
     x = roi
-    for _ in range(int(math.log2(_ROI_HEIGHT))):
-        x = Conv2D(256, 3, padding="same", dilation_rate=2)(x)
+    for c in [64, 128, 256]:
+        x = SeparableConv2D(c, 3, padding="same")(x)
+        x = BatchNormalization()(x)
+        x = LeakyReLU()(x)
+        x = SeparableConv2D(c, 3, padding="same")(x)
         x = BatchNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
+    x = Dropout(0.2)(x)
     x = Dense(n_vocab, activation="softmax")(x)
     output = Lambda(lambda x: tf.squeeze(x, 1), name=name)(x)
     return Model(roi, output)
