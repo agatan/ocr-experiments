@@ -250,17 +250,29 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
 
     # prediction model
     confidence = Activation("sigmoid")(
-        Lambda(lambda x: x[..., 0:1], name="confidence")(bbox_output)
+        Lambda(lambda x: x[..., 0], name="confidence")(bbox_output)
     )
     boxes = Lambda(
         lambda x: _reconstruct_boxes(x[..., 1:5], features_pixel=features_pixel),
         name="box",
     )(bbox_output)
     angles = Activation("tanh", name='angle')(Lambda(lambda x: x[..., 5:6])(bbox_output))
+    def nms_fn(args):
+        boxes, scores = args
+        def mapper(i):
+            bbs, ss = boxes[i], scores[i]
+            bbs = tf.reshape(bbs, [-1, 4])
+            ss = tf.reshape(ss, [-1])
+            indices = tf.image.non_max_suppression(bbs, ss, 32)
+            bbs = tf.gather(bbs, indices)
+            ss = tf.gather(ss, indices)
+            return tf.where(tf.greater_equal(ss, 0.5), bbs, tf.zeros_like(bbs))
+        idx = tf.range(0, tf.shape(boxes)[0])
+        return tf.map_fn(mapper, idx, dtype=tf.float32)
+    nms_boxes = Lambda(nms_fn, name='nms_boxes')([boxes, confidence])
     # TODO(agatan): stub. goal model is Model(image, { 'bbox': nmsed_boxes, 'text': ctc_decoded_text })
-    # prediction_model = Model([image, sampled_text_region, labels, label_length], { 'confidence': confidence, 'boxes': boxes, 'angles': angles, 'text': smashed })
     prediction_model = Model([image, sampled_text_region, labels, label_length],
-                             [confidence, boxes, angles, smashed, widths])
+                             [nms_boxes, smashed, widths])
 
     return training_model, prediction_model
 
