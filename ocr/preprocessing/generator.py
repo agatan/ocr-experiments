@@ -100,7 +100,7 @@ class Generator(object):
                 images = np.zeros((len(targets),) + self.input_size + (3,))
                 gts = np.zeros((len(targets),) + self.feature_size + (6,))
                 sample_text_regions = np.zeros((len(targets), 5))
-                sample_text = np.zeros((len(targets), MAX_LENGTH,), dtype=np.int32)
+                sample_text = np.zeros((len(targets), MAX_LENGTH), dtype=np.int32)
                 label_length = np.zeros((len(targets)), dtype=np.int64)
                 for i, target in enumerate(targets):
                     image, (annots, texts) = (
@@ -117,12 +117,15 @@ class Generator(object):
                         [self.char2idx(c) for c in texts[sample_annot_index]]
                     )
                     sample_text_regions[i, ...] = sample_annot
-                    sample_text[i, :len(sample_text_annot)] = sample_text_annot
+                    sample_text[i, : len(sample_text_annot)] = sample_text_annot
                     label_length[i] = len(sample_text_annot)
                     gt = self.compute_ground_truth(annots)
                     images[i, ...] = image / 255.0
                     gts[i, ...] = gt
-                yield [images, sample_text_regions, sample_text, label_length], {'bbox': gts, 'ctc': np.zeros(len(targets))}
+                yield [images, sample_text_regions, sample_text, label_length], {
+                    "bbox": gts,
+                    "ctc": np.zeros(len(targets)),
+                }
             if not infinite:
                 break
 

@@ -3,8 +3,16 @@ import math
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.keras import Model
-from tensorflow.python.keras.layers import Input, Conv2D, Lambda, Activation, BatchNormalization, LeakyReLU, \
-    MaxPooling2D, Dense
+from tensorflow.python.keras.layers import (
+    Input,
+    Conv2D,
+    Lambda,
+    Activation,
+    BatchNormalization,
+    LeakyReLU,
+    MaxPooling2D,
+    Dense,
+)
 
 from ocr.preprocessing import generator
 
@@ -175,26 +183,29 @@ _ROI_HEIGHT = 8
 
 
 def _roi_pooling(images, boxes):
-    non_zero_boxes = tf.logical_and(tf.greater_equal(boxes[:, 2] - boxes[:, 0], 1.0), tf.greater_equal(boxes[:, 3] - boxes[:, 1], 1.0))
+    non_zero_boxes = tf.logical_and(
+        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 1.0),
+        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 1.0),
+    )
     ratios = (boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1])
     ratios = tf.where(non_zero_boxes, ratios, tf.zeros(tf.shape(boxes)[0]))
-    max_width = tf.cast(
-        tf.ceil(
-            tf.reduce_max(ratios)
-            * _ROI_HEIGHT
-        ),
-        tf.int32,
-    )
+    max_width = tf.cast(tf.ceil(tf.reduce_max(ratios) * _ROI_HEIGHT), tf.int32)
 
-    widths = tf.to_int32(tf.ceil((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]) * _ROI_HEIGHT))
+    widths = tf.to_int32(
+        tf.ceil((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]) * _ROI_HEIGHT)
+    )
     widths = tf.expand_dims(widths, -1)
 
     def mapper(i):
         box = boxes[i]
         base_width = tf.to_float(box[2] - box[0])
         base_height = tf.to_float(box[3] - box[1])
+
         def cond():
-            return tf.logical_and(tf.greater_equal(base_width, 1.0), tf.greater_equal(base_height, 1.0))
+            return tf.logical_and(
+                tf.greater_equal(base_width, 1.0), tf.greater_equal(base_height, 1.0)
+            )
+
         def non_zero():
             height = tf.to_float(_ROI_HEIGHT)
             width = tf.ceil(base_width / base_height * height)
@@ -203,11 +214,15 @@ def _roi_pooling(images, boxes):
             xx = tf.to_float(tf.range(0, tf.to_int32(width))) * map_w + box[0]
             yy = tf.to_float(tf.range(0, tf.to_int32(height))) * map_h + box[1]
             pooled = _bilinear_interpolate(images[i], xx, yy)
-            padded = tf.pad(pooled, [[0, 0], [0, max_width - tf.to_int32(width)], [0, 0]])
+            padded = tf.pad(
+                pooled, [[0, 0], [0, max_width - tf.to_int32(width)], [0, 0]]
+            )
             return padded
+
         def zero():
-            return tf.zeros((_ROI_HEIGHT, max_width, images.shape[-1]), name='zerozero')
-        return tf.cond(cond(), non_zero, zero, name='hoge')
+            return tf.zeros((_ROI_HEIGHT, max_width, images.shape[-1]), name="zerozero")
+
+        return tf.cond(cond(), non_zero, zero, name="hoge")
 
     indices = tf.range(tf.shape(images)[0])
     return tf.map_fn(mapper, indices, dtype=tf.float32), widths
@@ -221,41 +236,49 @@ def _ctc_lambda_func(args):
 def _text_recognition(images, n_vocab, name=None):
     x = images
     for _ in range(int(math.log2(_ROI_HEIGHT))):
-        x = Conv2D(256, 3, padding='same', dilation_rate=2)(x)
+        x = Conv2D(256, 3, padding="same", dilation_rate=2)(x)
         x = BatchNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
-    x = Dense(n_vocab, activation='softmax')(x)
+    x = Dense(n_vocab, activation="softmax")(x)
     return Lambda(lambda x: tf.squeeze(x, 1), name=name)(x)
 
 
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10):
     image = Input(shape=input_shape, name="image")
     sampled_text_region = Input(shape=(5,), name="sampled_text_region")
-    labels = Input(shape=(generator.MAX_LENGTH,), name='sampled_text', dtype=tf.float32)
-    label_length = Input(shape=(1,), name='label_length', dtype=tf.int64)
+    labels = Input(shape=(generator.MAX_LENGTH,), name="sampled_text", dtype=tf.float32)
+    label_length = Input(shape=(1,), name="label_length", dtype=tf.int64)
 
     x = backborn(image)
-    bbox_output = Conv2D(6, kernel_size=1, name='bbox')(x)
+    bbox_output = Conv2D(6, kernel_size=1, name="bbox")(x)
 
     # RoI Pooling and OCR
-    roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))([x, sampled_text_region])
-    widths = Lambda(lambda x: x, name='widths')(widths)
+    roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))(
+        [x, sampled_text_region]
+    )
+    widths = Lambda(lambda x: x, name="widths")(widths)
     smashed = _text_recognition(roi, n_vocab)
 
-    ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name='ctc')([smashed, labels, widths, label_length])
+    ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name="ctc")(
+        [smashed, labels, widths, label_length]
+    )
 
-    training_model = Model([image, sampled_text_region, labels, label_length], [bbox_output, ctc_loss])
+    training_model = Model(
+        [image, sampled_text_region, labels, label_length], [bbox_output, ctc_loss]
+    )
     training_model.compile(
         "adam",
-        loss={'bbox': _loss, 'ctc': lambda y_true, y_pred: y_pred},
-        metrics={'bbox': [
-            _metric_confidence_accuracy,
-            _metric_iou,
-            _metric_loss_confidence,
-            __loss_iou,
-            _metric_loss_angle,
-        ]},
+        loss={"bbox": _loss, "ctc": lambda y_true, y_pred: y_pred},
+        metrics={
+            "bbox": [
+                _metric_confidence_accuracy,
+                _metric_iou,
+                _metric_loss_confidence,
+                __loss_iou,
+                _metric_loss_angle,
+            ]
+        },
     )
 
     # prediction model
@@ -266,10 +289,14 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         lambda x: _reconstruct_boxes(x[..., 1:5], features_pixel=features_pixel),
         name="box",
     )(bbox_output)
-    angles = Activation("tanh", name='angle')(Lambda(lambda x: x[..., 5:6])(bbox_output))
+    angles = Activation("tanh", name="angle")(
+        Lambda(lambda x: x[..., 5:6])(bbox_output)
+    )
     MAX_BOX = 32
+
     def nms_fn(args):
         boxes, scores = args
+
         def mapper(i):
             bbs, ss = boxes[i], scores[i]
             bbs = tf.reshape(bbs, [-1, 4])
@@ -278,34 +305,47 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
             bbs = tf.gather(bbs, indices)
             ss = tf.gather(ss, indices)
             return tf.where(tf.greater_equal(ss, 0.5), bbs, tf.zeros_like(bbs))
+
         idx = tf.range(0, tf.shape(boxes)[0])
         return tf.map_fn(mapper, idx, dtype=tf.float32)
 
     def crop_and_ocr(args):
         images, boxes = args
         ratios = (boxes[..., 2] - boxes[..., 0]) / (boxes[..., 3] - boxes[..., 1])
-        non_zero_boxes = tf.logical_and(tf.greater_equal(boxes[..., 2] - boxes[..., 0], 1.0),
-                                        tf.greater_equal(boxes[..., 3] - boxes[..., 1], 1.0))
+        non_zero_boxes = tf.logical_and(
+            tf.greater_equal(boxes[..., 2] - boxes[..., 0], 1.0),
+            tf.greater_equal(boxes[..., 3] - boxes[..., 1], 1.0),
+        )
         ratios = tf.where(non_zero_boxes, ratios, tf.zeros_like(ratios))
         max_width = tf.to_int32(tf.ceil(tf.reduce_max(ratios * _ROI_HEIGHT)))
+
         def _mapper(i):
             bbs = boxes[:, i]
             roi, widths = _roi_pooling(images, bbs)
             smashed = _text_recognition(roi, n_vocab, name=None)
             cond = tf.not_equal(tf.shape(smashed)[1], 0)
+
             def then_branch():
-                decoded, _probas = tf.keras.backend.ctc_decode(smashed, tf.squeeze(widths, axis=-1))
-                return tf.pad(decoded[0], [[0, 0], [0, max_width - tf.shape(decoded[0])[1]]], constant_values=-1)
+                decoded, _probas = tf.keras.backend.ctc_decode(
+                    smashed, tf.squeeze(widths, axis=-1)
+                )
+                return tf.pad(
+                    decoded[0],
+                    [[0, 0], [0, max_width - tf.shape(decoded[0])[1]]],
+                    constant_values=-1,
+                )
+
             def else_branch():
                 return -tf.ones((tf.shape(bbs)[0], max_width), dtype=tf.int64)
+
             return tf.cond(cond, then_branch, else_branch)
+
         text_recognition = tf.map_fn(_mapper, tf.range(0, MAX_BOX), dtype=tf.int64)
         return tf.transpose(text_recognition, [1, 0, 2])
 
-    nms_boxes = Lambda(nms_fn, name='nms_boxes')([boxes, confidence])
-    text = Lambda(crop_and_ocr, name='text')([x, nms_boxes])
-    prediction_model = Model([image],
-                             [nms_boxes, text])
+    nms_boxes = Lambda(nms_fn, name="nms_boxes")([boxes, confidence])
+    text = Lambda(crop_and_ocr, name="text")([x, nms_boxes])
+    prediction_model = Model([image], [nms_boxes, text])
 
     return training_model, prediction_model
 

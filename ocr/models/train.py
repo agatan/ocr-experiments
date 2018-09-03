@@ -61,7 +61,10 @@ def main():
     else:
         raise ValueError("Unknown backobne {}".format(args.backbone))
     training_model, _ = create_model(
-        backbone, features_pixel=features_pixel, input_shape=(512, 832, 3), n_vocab=process.vocab(),
+        backbone,
+        features_pixel=features_pixel,
+        input_shape=(512, 832, 3),
+        n_vocab=process.vocab(),
     )
     if args.weight:
         training_model.load_weights(args.weight)
