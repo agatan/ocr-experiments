@@ -12,7 +12,9 @@ from tensorflow.python.keras.layers import (
     LeakyReLU,
     MaxPooling2D,
     Dense,
-    SeparableConv2D, Dropout)
+    SeparableConv2D,
+    Dropout,
+)
 
 from ocr.preprocessing import generator
 
@@ -234,7 +236,7 @@ def _ctc_lambda_func(args):
 
 
 def _text_recognition_model(input_shape, n_vocab, name=None):
-    roi = Input(shape=input_shape, name='roi')
+    roi = Input(shape=input_shape, name="roi")
     x = roi
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
@@ -336,7 +338,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
 
             def then_branch():
                 decoded, _probas = tf.keras.backend.ctc_decode(
-                    smashed, tf.squeeze(widths, axis=-1), greedy=False,
+                    smashed, tf.squeeze(widths, axis=-1), greedy=False
                 )
                 return tf.pad(
                     decoded[0],
