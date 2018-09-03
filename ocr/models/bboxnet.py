@@ -250,12 +250,12 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     labels = Input(shape=(generator.MAX_LENGTH,), name="sampled_text", dtype=tf.float32)
     label_length = Input(shape=(1,), name="label_length", dtype=tf.int64)
 
-    x = backborn(image)
-    bbox_output = Conv2D(6, kernel_size=1, name="bbox")(x)
+    fmap = backborn(image)
+    bbox_output = Conv2D(6, kernel_size=1, name="bbox")(fmap)
 
     # RoI Pooling and OCR
     roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))(
-        [x, sampled_text_region]
+        [fmap, sampled_text_region]
     )
     widths = Lambda(lambda x: x, name="widths")(widths)
     smashed = _text_recognition(roi, n_vocab)
@@ -285,7 +285,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     confidence = Activation("sigmoid")(
         Lambda(lambda x: x[..., 0], name="confidence")(bbox_output)
     )
-    boxes = Lambda(
+    bounding_boxes = Lambda(
         lambda x: _reconstruct_boxes(x[..., 1:5], features_pixel=features_pixel),
         name="box",
     )(bbox_output)
@@ -311,6 +311,8 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
 
     def crop_and_ocr(args):
         images, boxes = args
+        boxes = boxes / features_pixel
+
         ratios = (boxes[..., 2] - boxes[..., 0]) / (boxes[..., 3] - boxes[..., 1])
         non_zero_boxes = tf.logical_and(
             tf.greater_equal(boxes[..., 2] - boxes[..., 0], 1.0),
@@ -320,14 +322,14 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         max_width = tf.to_int32(tf.ceil(tf.reduce_max(ratios * _ROI_HEIGHT)))
 
         def _mapper(i):
-            bbs = boxes[:, i]
+            bbs = boxes[:, i, :]
             roi, widths = _roi_pooling(images, bbs)
             smashed = _text_recognition(roi, n_vocab, name=None)
             cond = tf.not_equal(tf.shape(smashed)[1], 0)
 
             def then_branch():
                 decoded, _probas = tf.keras.backend.ctc_decode(
-                    smashed, tf.squeeze(widths, axis=-1)
+                    smashed, tf.squeeze(widths, axis=-1), greedy=False,
                 )
                 return tf.pad(
                     decoded[0],
@@ -343,8 +345,8 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         text_recognition = tf.map_fn(_mapper, tf.range(0, MAX_BOX), dtype=tf.int64)
         return tf.transpose(text_recognition, [1, 0, 2])
 
-    nms_boxes = Lambda(nms_fn, name="nms_boxes")([boxes, confidence])
-    text = Lambda(crop_and_ocr, name="text")([x, nms_boxes])
+    nms_boxes = Lambda(nms_fn, name="nms_boxes")([bounding_boxes, confidence])
+    text = Lambda(crop_and_ocr, name="text")([fmap, nms_boxes])
     prediction_model = Model([image], [nms_boxes, text])
 
     return training_model, prediction_model
