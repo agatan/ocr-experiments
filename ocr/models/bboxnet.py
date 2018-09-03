@@ -14,8 +14,6 @@ from tensorflow.python.keras.layers import (
     Dense,
     SeparableConv2D,
     Dropout,
-    Bidirectional,
-    LSTM,
 )
 
 from ocr.preprocessing import generator
@@ -248,12 +246,9 @@ def _text_recognition_model(input_shape, n_vocab, name=None):
         x = BatchNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
-    x = Bidirectional(LSTM(256, return_sequences=True, kernel_initializer="he_normal"))(
-        x
-    )
+    x = Lambda(lambda v: tf.squeeze(v, 1))(x)
     x = Dropout(0.2)(x)
-    x = Dense(n_vocab, activation="softmax")(x)
-    output = Lambda(lambda x: tf.squeeze(x, 1), name=name)(x)
+    output = Dense(n_vocab, activation="softmax", name=name)(x)
     return Model(roi, output)
 
 
