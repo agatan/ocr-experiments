@@ -2,6 +2,7 @@ import math
 
 import numpy as np
 import tensorflow as tf
+
 from tensorflow.python.keras import Model
 from tensorflow.python.keras.layers import (
     Input,
@@ -17,6 +18,7 @@ from tensorflow.python.keras.layers import (
 )
 
 from ocr.preprocessing import generator
+from ocr.models.group_norm import GroupNormalization
 
 K = tf.keras.backend
 
@@ -240,10 +242,10 @@ def _text_recognition_model(input_shape, n_vocab, name=None):
     x = roi
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = BatchNormalization()(x)
+        x = GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = BatchNormalization()(x)
+        x = GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
     x = Lambda(lambda v: tf.squeeze(v, 1))(x)

@@ -70,7 +70,7 @@ def main():
         training_model.load_weights(args.weight)
 
     gen = CSVGenerator(
-        args.train_csv, features_pixel=features_pixel, input_size=(512, 832)
+        args.train_csv, features_pixel=features_pixel, input_size=(512, 832), aug=True
     )
     valid_gen = CSVGenerator(
         args.validation_csv, features_pixel=features_pixel, input_size=(512, 832)
