@@ -220,9 +220,9 @@ def _roi_pooling(images, boxes):
             return padded
 
         def zero():
-            return tf.zeros((_ROI_HEIGHT, max_width, images.shape[-1]), name="zerozero")
+            return tf.zeros((_ROI_HEIGHT, max_width, images.shape[-1]))
 
-        return tf.cond(cond(), non_zero, zero, name="hoge")
+        return tf.cond(cond(), non_zero, zero)
 
     indices = tf.range(tf.shape(images)[0])
     return tf.map_fn(mapper, indices, dtype=tf.float32), widths
