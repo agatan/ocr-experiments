@@ -233,15 +233,17 @@ def _ctc_lambda_func(args):
     return tf.keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
-def _text_recognition(images, n_vocab, name=None):
-    x = images
+def _text_recognition_model(input_shape, n_vocab, name=None):
+    roi = Input(shape=input_shape, name='roi')
+    x = roi
     for _ in range(int(math.log2(_ROI_HEIGHT))):
         x = Conv2D(256, 3, padding="same", dilation_rate=2)(x)
         x = BatchNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
     x = Dense(n_vocab, activation="softmax")(x)
-    return Lambda(lambda x: tf.squeeze(x, 1), name=name)(x)
+    output = Lambda(lambda x: tf.squeeze(x, 1), name=name)(x)
+    return Model(roi, output)
 
 
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10):
@@ -258,7 +260,8 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         [fmap, sampled_text_region]
     )
     widths = Lambda(lambda x: x, name="widths")(widths)
-    smashed = _text_recognition(roi, n_vocab)
+    text_recognition_model = _text_recognition_model(roi.shape[1:], n_vocab)
+    smashed = text_recognition_model(roi)
 
     ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name="ctc")(
         [smashed, labels, widths, label_length]
@@ -324,7 +327,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         def _mapper(i):
             bbs = boxes[:, i, :]
             roi, widths = _roi_pooling(images, bbs)
-            smashed = _text_recognition(roi, n_vocab, name=None)
+            smashed = text_recognition_model(roi)
             cond = tf.not_equal(tf.shape(smashed)[1], 0)
 
             def then_branch():
