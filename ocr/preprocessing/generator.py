@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Tuple, List
 
 import numpy as np
+from imgaug import augmenters as iaa
 
 from ocr.data import process
 from ocr.utils.image import resize_image, read_image
@@ -14,7 +15,7 @@ MAX_LENGTH = 32
 
 
 class Generator(object):
-    def __init__(self, input_size=(512, 512), features_pixel=8):
+    def __init__(self, input_size=(512, 512), features_pixel=8, aug=False):
         self.input_size = input_size
         assert input_size[0] % features_pixel == 0
         assert input_size[1] % features_pixel == 0
@@ -23,6 +24,17 @@ class Generator(object):
             input_size[0] // features_pixel,
             input_size[1] // features_pixel,
         )
+        if aug:
+            self.aug = iaa.Sequential([
+                iaa.ContrastNormalization((0.75, 1.5)),
+                iaa.AdditiveGaussianNoise(loc=0, scale=(0.0, 0.05 * 255), per_channel=0.5),
+                iaa.Multiply((0.8, 1.2), per_channel=0.2),
+                iaa.Add((-10, 10), per_channel=0.5),
+                iaa.Pepper((0, 0.05), per_channel=0.2),
+                iaa.GaussianBlur((0, 2.0)),
+            ])
+        else:
+            self.aug = None
 
     def resize_entry(
         self, image: np.ndarray, annots: np.ndarray
@@ -97,7 +109,7 @@ class Generator(object):
                 start_idx = batch * batch_size
                 end_idx = min((batch + 1) * batch_size, self.size())
                 targets = indices[start_idx:end_idx]
-                images = np.zeros((len(targets),) + self.input_size + (3,))
+                images = np.zeros((len(targets),) + self.input_size + (3,), dtype=np.uint8)
                 gts = np.zeros((len(targets),) + self.feature_size + (6,))
                 sample_text_regions = np.zeros((len(targets), 5))
                 sample_text = np.zeros((len(targets), MAX_LENGTH), dtype=np.int32)
@@ -120,8 +132,11 @@ class Generator(object):
                     sample_text[i, : len(sample_text_annot)] = sample_text_annot
                     label_length[i] = len(sample_text_annot)
                     gt = self.compute_ground_truth(annots)
-                    images[i, ...] = image / 255.0
+                    images[i, ...] = image
                     gts[i, ...] = gt
+                if self.aug:
+                    images = self.aug.augment_images(images)
+                images = images.astype(np.float32) / 255.0
                 yield [images, sample_text_regions, sample_text, label_length], {
                     "bbox": gts,
                     "ctc": np.zeros(len(targets)),
