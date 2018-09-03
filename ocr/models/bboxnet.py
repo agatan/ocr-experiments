@@ -175,13 +175,17 @@ _ROI_HEIGHT = 8
 
 
 def _roi_pooling(images, boxes):
+    non_zero_boxes = tf.logical_and(tf.greater_equal(boxes[:, 2] - boxes[:, 0], 1.0), tf.greater_equal(boxes[:, 3] - boxes[:, 1], 1.0))
+    ratios = (boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1])
+    ratios = tf.where(non_zero_boxes, ratios, tf.zeros(tf.shape(boxes)[0]))
     max_width = tf.cast(
         tf.ceil(
-            tf.reduce_max((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]))
+            tf.reduce_max(ratios)
             * _ROI_HEIGHT
         ),
         tf.int32,
     )
+
     widths = tf.to_int32(tf.ceil((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]) * _ROI_HEIGHT))
     widths = tf.expand_dims(widths, -1)
 
@@ -189,15 +193,21 @@ def _roi_pooling(images, boxes):
         box = boxes[i]
         base_width = tf.to_float(box[2] - box[0])
         base_height = tf.to_float(box[3] - box[1])
-        height = tf.to_float(_ROI_HEIGHT)
-        width = tf.ceil(base_width / base_height * height)
-        map_w = base_width / (width - 1)
-        map_h = base_height / (height - 1)
-        xx = tf.to_float(tf.range(0, tf.to_int32(width))) * map_w + box[0]
-        yy = tf.to_float(tf.range(0, tf.to_int32(height))) * map_h + box[1]
-        pooled = _bilinear_interpolate(images[i], xx, yy)
-        padded = tf.pad(pooled, [[0, 0], [0, max_width - tf.to_int32(width)], [0, 0]])
-        return padded
+        def cond():
+            return tf.logical_and(tf.greater_equal(base_width, 1.0), tf.greater_equal(base_height, 1.0))
+        def non_zero():
+            height = tf.to_float(_ROI_HEIGHT)
+            width = tf.ceil(base_width / base_height * height)
+            map_w = base_width / (width - 1)
+            map_h = base_height / (height - 1)
+            xx = tf.to_float(tf.range(0, tf.to_int32(width))) * map_w + box[0]
+            yy = tf.to_float(tf.range(0, tf.to_int32(height))) * map_h + box[1]
+            pooled = _bilinear_interpolate(images[i], xx, yy)
+            padded = tf.pad(pooled, [[0, 0], [0, max_width - tf.to_int32(width)], [0, 0]])
+            return padded
+        def zero():
+            return tf.zeros((_ROI_HEIGHT, max_width, images.shape[-1]), name='zerozero')
+        return tf.cond(cond(), non_zero, zero, name='hoge')
 
     indices = tf.range(tf.shape(images)[0])
     return tf.map_fn(mapper, indices, dtype=tf.float32), widths
@@ -208,7 +218,7 @@ def _ctc_lambda_func(args):
     return tf.keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
-def _text_recognition(images, n_vocab, name):
+def _text_recognition(images, n_vocab, name=None):
     x = images
     for _ in range(int(math.log2(_ROI_HEIGHT))):
         x = Conv2D(256, 3, padding='same', dilation_rate=2)(x)
@@ -231,7 +241,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     # RoI Pooling and OCR
     roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))([x, sampled_text_region])
     widths = Lambda(lambda x: x, name='widths')(widths)
-    smashed = _text_recognition(roi, n_vocab, name='text')
+    smashed = _text_recognition(roi, n_vocab)
 
     ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name='ctc')([smashed, labels, widths, label_length])
 
@@ -257,22 +267,45 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         name="box",
     )(bbox_output)
     angles = Activation("tanh", name='angle')(Lambda(lambda x: x[..., 5:6])(bbox_output))
+    MAX_BOX = 32
     def nms_fn(args):
         boxes, scores = args
         def mapper(i):
             bbs, ss = boxes[i], scores[i]
             bbs = tf.reshape(bbs, [-1, 4])
             ss = tf.reshape(ss, [-1])
-            indices = tf.image.non_max_suppression(bbs, ss, 32)
+            indices = tf.image.non_max_suppression(bbs, ss, MAX_BOX)
             bbs = tf.gather(bbs, indices)
             ss = tf.gather(ss, indices)
             return tf.where(tf.greater_equal(ss, 0.5), bbs, tf.zeros_like(bbs))
         idx = tf.range(0, tf.shape(boxes)[0])
         return tf.map_fn(mapper, idx, dtype=tf.float32)
+
+    def crop_and_ocr(args):
+        images, boxes = args
+        ratios = (boxes[..., 2] - boxes[..., 0]) / (boxes[..., 3] - boxes[..., 1])
+        non_zero_boxes = tf.logical_and(tf.greater_equal(boxes[..., 2] - boxes[..., 0], 1.0),
+                                        tf.greater_equal(boxes[..., 3] - boxes[..., 1], 1.0))
+        ratios = tf.where(non_zero_boxes, ratios, tf.zeros_like(ratios))
+        max_width = tf.to_int32(tf.ceil(tf.reduce_max(ratios * _ROI_HEIGHT)))
+        def _mapper(i):
+            bbs = boxes[:, i]
+            roi, widths = _roi_pooling(images, bbs)
+            smashed = _text_recognition(roi, n_vocab, name=None)
+            cond = tf.not_equal(tf.shape(smashed)[1], 0)
+            def then_branch():
+                decoded, _probas = tf.keras.backend.ctc_decode(smashed, tf.squeeze(widths, axis=-1))
+                return tf.pad(decoded[0], [[0, 0], [0, max_width - tf.shape(decoded[0])[1]]], constant_values=-1)
+            def else_branch():
+                return -tf.ones((tf.shape(bbs)[0], max_width), dtype=tf.int64)
+            return tf.cond(cond, then_branch, else_branch)
+        text_recognition = tf.map_fn(_mapper, tf.range(0, MAX_BOX), dtype=tf.int64)
+        return tf.transpose(text_recognition, [1, 0, 2])
+
     nms_boxes = Lambda(nms_fn, name='nms_boxes')([boxes, confidence])
-    # TODO(agatan): stub. goal model is Model(image, { 'bbox': nmsed_boxes, 'text': ctc_decoded_text })
-    prediction_model = Model([image, sampled_text_region, labels, label_length],
-                             [nms_boxes, smashed, widths])
+    text = Lambda(crop_and_ocr, name='text')([x, nms_boxes])
+    prediction_model = Model([image],
+                             [nms_boxes, text])
 
     return training_model, prediction_model
 

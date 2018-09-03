@@ -46,6 +46,20 @@ def idx2char(i):
 
 def random_fontname():
     fonts = list(glob.glob("/usr/share/fonts/truetype/ubuntu-font-family/*.ttf"))
+    fonts = [
+        "/System/Library/Fonts/ヒラギノ角ゴシック W0.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W1.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W2.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W9.ttc",
+        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+        "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
+    ]
     return np.random.choice(fonts)
 
 
