@@ -431,6 +431,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
             smashed_vertical = text_recognition_vertical_model(roi_vertical)
             widths = tf.squeeze(widths, axis=-1)
             heights = tf.squeeze(heights, axis=-1)
+            smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical([smashed_horizontal, smashed_vertical])
             smashed = tf.where(tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical)
             lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
             cond = tf.not_equal(tf.shape(smashed)[1], 0)
