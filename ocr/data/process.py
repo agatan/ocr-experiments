@@ -85,6 +85,8 @@ def make_image(width, height, bgcolor):
     while len(boxes) < required_boxes:
         text_len = np.random.randint(3, 12)
         text = "".join((np.random.choice(charset) for _ in range(text_len)))
+        if np.random.rand() < 0.4:
+            text = '\n'.join(text)
 
         top, left = np.random.randint(0, height), np.random.randint(0, width)
         w, h, f = drawn_bb(
