@@ -292,8 +292,8 @@ def _ctc_lambda_func(args):
     return tf.keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
-def _text_recognition_horizontal_model(input_shape, n_vocab, name=None):
-    roi = Input(shape=input_shape, name="roi")
+def _text_recognition_horizontal_model(input_shape, n_vocab):
+    roi = Input(shape=input_shape, name="roi_horizontal")
     x = roi
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
@@ -305,12 +305,12 @@ def _text_recognition_horizontal_model(input_shape, n_vocab, name=None):
         x = MaxPooling2D((2, 1))(x)
     x = Lambda(lambda v: tf.squeeze(v, 1))(x)
     x = Dropout(0.2)(x)
-    output = Dense(n_vocab, activation="softmax", name=name)(x)
-    return Model(roi, output)
+    output = Dense(n_vocab, activation="softmax")(x)
+    return Model(roi, output, name='horizontal_model')
 
 
-def _text_recognition_vertical_model(input_shape, n_vocab, name=None):
-    roi = Input(shape=input_shape, name="roi")
+def _text_recognition_vertical_model(input_shape, n_vocab):
+    roi = Input(shape=input_shape, name="roi_vertical")
     x = roi
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
@@ -323,7 +323,7 @@ def _text_recognition_vertical_model(input_shape, n_vocab, name=None):
     x = Lambda(lambda v: tf.squeeze(v, 2))(x)
     x = Dropout(0.2)(x)
     output = Dense(n_vocab, activation="softmax")(x)
-    return Model(roi, output, name=name)
+    return Model(roi, output, name='vertical_model')
 
 
 def _pad_horizontal_and_vertical(args):
@@ -348,19 +348,19 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         [fmap, sampled_text_region]
     )
     widths = Lambda(lambda x: x, name="widths")(widths)
-    text_recognition_horizontal_model = _text_recognition_horizontal_model(roi_horizontal.shape[1:], n_vocab, name='horizontal')
+    text_recognition_horizontal_model = _text_recognition_horizontal_model(roi_horizontal.shape[1:], n_vocab)
     smashed_horizontal = text_recognition_horizontal_model(roi_horizontal)
     roi_vertical, heights = Lambda(lambda args: _roi_pooling_vertical(args[0], args[1]))(
         [fmap, sampled_text_region]
     )
     heights = Lambda(lambda x: x, name="heights")(heights)
-    text_recognition_vertical_model = _text_recognition_vertical_model(roi_vertical.shape[1:], n_vocab, name='vertical')
+    text_recognition_vertical_model = _text_recognition_vertical_model(roi_vertical.shape[1:], n_vocab)
     smashed_vertical = text_recognition_vertical_model(roi_vertical)
 
     # pad to merge horizontal and vertical tensors
     smashed_horizontal, smashed_vertical = Lambda(_pad_horizontal_and_vertical)([smashed_horizontal, smashed_vertical])
-    length = Lambda(lambda args: tf.where(tf.not_equal(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([widths, heights])
-    smashed = Lambda(lambda args: tf.where(tf.not_equal(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([smashed_horizontal, smashed_vertical])
+    length = Lambda(lambda args: tf.where(tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([widths, heights])
+    smashed = Lambda(lambda args: tf.where(tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([smashed_horizontal, smashed_vertical])
 
     ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name="ctc")(
         [smashed, labels, length, label_length]
