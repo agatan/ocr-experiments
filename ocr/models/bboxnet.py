@@ -416,12 +416,16 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         boxes = boxes / features_pixel
 
         ratios = (boxes[..., 2] - boxes[..., 0]) / (boxes[..., 3] - boxes[..., 1])
-        non_zero_boxes = tf.logical_and(
-            tf.greater_equal(boxes[..., 2] - boxes[..., 0], 1.0),
-            tf.greater_equal(boxes[..., 3] - boxes[..., 1], 1.0),
+        vertial_ratios = 1 / ratios
+        non_zero_boxes = tf.logical_or(
+            tf.greater_equal(boxes[..., 2] - boxes[..., 0], 0.1),
+            tf.greater_equal(boxes[..., 3] - boxes[..., 1], 0.1),
         )
         ratios = tf.where(non_zero_boxes, ratios, tf.zeros_like(ratios))
+        vertial_ratios = tf.where(non_zero_boxes, vertial_ratios, tf.zeros_like(vertial_ratios))
         max_width = tf.to_int32(tf.ceil(tf.reduce_max(ratios * _ROI_HEIGHT)))
+        max_height = tf.to_int32(tf.ceil(tf.reduce_max(vertial_ratios * _ROI_WIDTH)))
+        max_length = tf.maximum(max_width, max_height)
 
         def _mapper(i):
             bbs = boxes[:, i, :]
@@ -442,12 +446,12 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
                 )
                 return tf.pad(
                     decoded[0],
-                    [[0, 0], [0, max_width - tf.shape(decoded[0])[1]]],
+                    [[0, 0], [0, max_length - tf.shape(decoded[0])[1]]],
                     constant_values=-1,
                 )
 
             def else_branch():
-                return -tf.ones((tf.shape(bbs)[0], max_width), dtype=tf.int64)
+                return -tf.ones((tf.shape(bbs)[0], max_length), dtype=tf.int64)
 
             return tf.cond(cond, then_branch, else_branch)
 
