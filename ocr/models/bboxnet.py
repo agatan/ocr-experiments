@@ -193,9 +193,9 @@ def _roi_pooling_horizontal(images, boxes):
         boxes[:, 3] - boxes[:, 1], # height
     )
     boxes = tf.where(is_horizontal, boxes, tf.zeros_like(boxes))
-    non_zero_boxes = tf.logical_and(
-        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 1.0),
-        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 1.0),
+    non_zero_boxes = tf.logical_or(
+        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 0.1),
+        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 0.1),
     )
     ratios = (boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1])
     ratios = tf.where(non_zero_boxes, ratios, tf.zeros(tf.shape(boxes)[0]))
@@ -209,8 +209,8 @@ def _roi_pooling_horizontal(images, boxes):
         base_height = tf.to_float(box[3] - box[1])
 
         def cond():
-            return tf.logical_and(
-                tf.greater_equal(base_width, 1.0), tf.greater_equal(base_height, 1.0)
+            return tf.logical_or(
+                tf.greater_equal(base_width, 0.1), tf.greater_equal(base_height, 0.1)
             )
 
         def non_zero():
@@ -245,9 +245,9 @@ def _roi_pooling_vertical(images, boxes):
         boxes[:, 3] - boxes[:, 1],  # height
     )
     boxes = tf.where(is_vertical, boxes, tf.zeros_like(boxes))
-    non_zero_boxes = tf.logical_and(
-        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 1.0),
-        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 1.0),
+    non_zero_boxes = tf.logical_or(
+        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 0.1),
+        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 0.1),
     )
     ratios = (boxes[:, 3] - boxes[:, 1]) / (boxes[:, 2] - boxes[:, 0])
     ratios = tf.where(non_zero_boxes, ratios, tf.zeros(tf.shape(boxes)[0]))
@@ -261,8 +261,8 @@ def _roi_pooling_vertical(images, boxes):
         base_height = tf.to_float(box[3] - box[1])
 
         def cond():
-            return tf.logical_and(
-                tf.greater_equal(base_width, 1.0), tf.greater_equal(base_height, 1.0)
+            return tf.logical_or(
+                tf.greater_equal(base_width, 0.1), tf.greater_equal(base_height, 0.1)
             )
 
         def non_zero():
