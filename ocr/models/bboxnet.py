@@ -267,9 +267,9 @@ def _roi_pooling_vertical(images, boxes):
 
         def non_zero():
             width = tf.to_float(_ROI_WIDTH)
-            height = tf.ceil(base_width / base_height * width)
-            map_w = base_width / (height - 1)
-            map_h = base_height / (width - 1)
+            height = tf.ceil(base_height / base_width * width)
+            map_w = base_width / (width - 1)
+            map_h = base_height / (height - 1)
             xx = tf.to_float(tf.range(0, tf.to_int32(width))) * map_w + box[0]
             yy = tf.to_float(tf.range(0, tf.to_int32(height))) * map_h + box[1]
             pooled = _bilinear_interpolate(images[i], xx, yy)
