@@ -297,10 +297,11 @@ def _text_recognition_horizontal_model(input_shape, n_vocab):
     x = roi
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = GroupNormalization()(x)
+        # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
+        # x = GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = GroupNormalization()(x)
+        # x = GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
     x = Lambda(lambda v: tf.squeeze(v, 1))(x)
@@ -314,10 +315,11 @@ def _text_recognition_vertical_model(input_shape, n_vocab):
     x = roi
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = GroupNormalization()(x)
+        # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
+        # GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = GroupNormalization()(x)
+        # x = GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((1, 2))(x)
     x = Lambda(lambda v: tf.squeeze(v, 2))(x)
