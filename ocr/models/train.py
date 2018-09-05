@@ -56,15 +56,15 @@ def main():
         set_debugger_session()
 
     if args.backbone == "resnet50":
-        backbone, features_pixel = resnet50.backbone((512, 832, 3))
+        backbone, features_pixel = resnet50.backbone((None, None, 3))
     elif args.backbone == "mobilenet":
-        backbone, features_pixel = mobilenet.backbone((512, 832, 3))
+        backbone, features_pixel = mobilenet.backbone((None, None, 3))
     else:
         raise ValueError("Unknown backobne {}".format(args.backbone))
     training_model, _ = create_model(
         backbone,
         features_pixel=features_pixel,
-        input_shape=(512, 832, 3),
+        input_shape=(None, None, 3),
         n_vocab=process.vocab(),
     )
     if args.weight:
