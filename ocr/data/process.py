@@ -4,22 +4,33 @@ import argparse
 import csv
 import logging
 import os
-import json
 import glob
+import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 from tqdm import tqdm
+from faker import Faker
+
+
+_faker = Faker('ja_JP')
+
+def _random_text():
+    choices = [_faker.address, _faker.first_name, _faker.last_name, _faker.first_romanized_name, _faker.last_romanized_name, _faker.phone_number, _faker.company, _faker.email, _faker.url]
+    fn = np.random.choice(choices)
+    return fn()
 
 
 def _charset():
     # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
-    digits = list("あいうえお")
+    # digits = list("あいうえお")
+    with open(os.path.join(os.path.dirname(__file__), '..', '..', 'charlist.txt'), 'r') as f:
+        chars = list(f.read().strip())
     # hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
     # return alphas + digits + hiras
-    return digits
+    return chars
 
 
 CHARSET = _charset()
@@ -45,22 +56,20 @@ def idx2char(i):
 
 
 def random_fontname():
-    fonts = list(glob.glob("/usr/share/fonts/truetype/ubuntu-font-family/*.ttf"))
-    fonts = list(glob.glob("/usr/share/fonts/truetype/ricty-diminished/*.ttf"))
-    # fonts = [
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W0.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W1.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W2.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
-    #     "/System/Library/Fonts/ヒラギノ角ゴシック W9.ttc",
-    #     "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
-    #     "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
-    # ]
+    fonts = [
+        "/System/Library/Fonts/ヒラギノ角ゴシック W0.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W1.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W2.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W9.ttc",
+        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+        "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
+    ]
     return np.random.choice(fonts)
 
 
@@ -79,14 +88,12 @@ def make_image(width, height, bgcolor):
     draw = ImageDraw.Draw(image)
 
     used = np.zeros((width, height), dtype="int32")
-    charset = _charset()
 
     required_boxes = np.random.randint(3, 10)
     boxes = []
     while len(boxes) < required_boxes:
-        text_len = np.random.randint(3, 12)
-        text = "".join((np.random.choice(charset) for _ in range(text_len)))
-        if np.random.rand() < 4:
+        text = _random_text()
+        if not all((ord(c) < 128 for c in text)) and np.random.rand() < 0.5:
             text = "\n".join(text)
 
         top, left = np.random.randint(0, height), np.random.randint(0, width)
@@ -117,6 +124,7 @@ def make_image(width, height, bgcolor):
 
 
 def _dofn(n: int, n_images: int, out: str):
+    np.random.seed(int(time.time() * n) % (2 ** 32))
     with open(os.path.join(out, f"annotations-{n}.csv"), "w") as f:
         w = csv.DictWriter(
             f, fieldnames=["image", "xmin", "ymin", "xmax", "ymax", "angle", "text"]
