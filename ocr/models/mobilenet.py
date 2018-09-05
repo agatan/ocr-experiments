@@ -3,7 +3,6 @@ from tensorflow.python.keras.applications import MobileNet
 from tensorflow.python.keras.layers import (
     Conv2D,
     BatchNormalization,
-    ReLU,
     UpSampling2D,
     Add,
     LeakyReLU,

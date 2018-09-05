@@ -6,8 +6,6 @@ from tensorflow.python.keras.layers import (
     BatchNormalization,
     Add,
     ReLU,
-    Lambda,
-    Activation,
 )
 from tensorflow.python.keras.applications import ResNet50
 

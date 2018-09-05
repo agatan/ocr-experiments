@@ -1,6 +1,3 @@
-import math
-
-import numpy as np
 import tensorflow as tf
 
 from tensorflow.python.keras import Model
@@ -9,18 +6,14 @@ from tensorflow.python.keras.layers import (
     Conv2D,
     Lambda,
     Activation,
-    BatchNormalization,
     LeakyReLU,
     MaxPooling2D,
     Dense,
     SeparableConv2D,
     Dropout,
-    Add,
-    concatenate,
 )
 
 from ocr.preprocessing import generator
-from ocr.models.group_norm import GroupNormalization
 
 K = tf.keras.backend
 
