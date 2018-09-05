@@ -69,11 +69,11 @@ class Generator(object):
         """Returns ground truth matrix.
 
         Args:
-            annots: list of annotations ([#box, (xmin, ymin, xmax, ymax, angle)])
+            annots: list of annotations ([#box, (xmin, ymin, xmax, ymax)])
         Returns:
-            ground_truth: [H of feature_size, W of feature_size, (confidence, left, top, right, bottom, angle)]
+            ground_truth: [H of feature_size, W of feature_size, (confidence, left, top, right, bottom)]
         """
-        ground_truth = np.zeros(self.feature_size + (6,))
+        ground_truth = np.zeros(self.feature_size + (5,))
         for annot in annots:
             xmin = annot[0] / self.feature_pixel
             xmin_ceil = np.maximum(np.math.ceil(xmin), 0)
@@ -102,7 +102,6 @@ class Generator(object):
             ground_truth[
                 ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 4
             ] = ymax - np.expand_dims(np.arange(ymin_ceil, ymax_floor), axis=1)
-            ground_truth[ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 5] = annot[4]
         return ground_truth
 
     def batches(self, batch_size=32, infinite=True):
@@ -116,8 +115,8 @@ class Generator(object):
                 images = np.zeros(
                     (len(targets),) + self.input_size + (3,), dtype=np.uint8
                 )
-                gts = np.zeros((len(targets),) + self.feature_size + (6,))
-                sample_text_regions = np.zeros((len(targets), 5))
+                gts = np.zeros((len(targets),) + self.feature_size + (5,))
+                sample_text_regions = np.zeros((len(targets), 4))
                 sample_text = np.zeros((len(targets), MAX_LENGTH), dtype=np.int32)
                 label_length = np.zeros((len(targets)), dtype=np.int64)
                 for i, target in enumerate(targets):
@@ -158,7 +157,7 @@ def _read_annotations(csvpath: str):
         for i, row in enumerate(reader):
             rrow = {
                 col: float(row[col])
-                for col in ["xmin", "xmax", "ymin", "ymax", "angle"]
+                for col in ["xmin", "xmax", "ymin", "ymax"]
             }
             if rrow["xmax"] <= rrow["xmin"]:
                 raise ValueError(
@@ -193,14 +192,13 @@ class CSVGenerator(Generator):
 
     def load_annotation(self, image_index: int) -> np.ndarray:
         annots = self.annotations[self.image_names[image_index]]
-        result = np.zeros((len(annots), 5))  # [#box, (xmin, ymin, xmax, ymax, angle)]
+        result = np.zeros((len(annots), 4))  # [#box, (xmin, ymin, xmax, ymax)]
         text = []
         for idx, annot in enumerate(annots):
             result[idx, 0] = annot["xmin"]
             result[idx, 1] = annot["ymin"]
             result[idx, 2] = annot["xmax"]
             result[idx, 3] = annot["ymax"]
-            result[idx, 4] = annot["angle"] / 90.0
             text.append(annot["text"].replace("\n", ""))
         return result, text
 

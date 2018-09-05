@@ -26,8 +26,8 @@ K = tf.keras.backend
 
 
 def __flatten_and_mask(y_true, y_pred):
-    y_true = tf.reshape(y_true, shape=(-1, 6))
-    y_pred = tf.reshape(y_pred, shape=(-1, 6))
+    y_true = tf.reshape(y_true, shape=(-1, 5))
+    y_pred = tf.reshape(y_pred, shape=(-1, 5))
     mask = tf.not_equal(y_true[:, 0], -1.0)
     y_true = tf.boolean_mask(y_true, mask=mask)
     y_pred = tf.boolean_mask(y_pred, mask=mask)
@@ -327,12 +327,12 @@ def _pad_horizontal_and_vertical(args):
 
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10):
     image = Input(shape=input_shape, name="image")
-    sampled_text_region = Input(shape=(5,), name="sampled_text_region")
+    sampled_text_region = Input(shape=(4,), name="sampled_text_region")
     labels = Input(shape=(generator.MAX_LENGTH,), name="labels", dtype=tf.float32)
     label_length = Input(shape=(1,), name="label_length", dtype=tf.int64)
 
     fmap = backborn(image)
-    bbox_output = Conv2D(6, kernel_size=1, name="bbox")(fmap)
+    bbox_output = Conv2D(5, kernel_size=1, name="bbox")(fmap)
 
     # RoI Pooling and OCR
     roi_horizontal, widths = Lambda(
