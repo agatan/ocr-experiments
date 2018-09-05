@@ -17,8 +17,34 @@ from faker import Faker
 
 _faker = Faker('ja_JP')
 
+
+def _random_from_charset():
+    n = np.random.randint(1, 3)
+    return ''.join(np.random.choice(CHARSET, n))
+
 def _random_text():
-    choices = [_faker.address, _faker.first_name, _faker.last_name, _faker.first_romanized_name, _faker.last_romanized_name, _faker.phone_number, _faker.company, _faker.email, _faker.url]
+    choices = [
+        _random_from_charset,
+        _random_from_charset,
+        _random_from_charset,
+        _faker.address,
+        _faker.first_name,
+        _faker.last_name,
+        _random_from_charset,
+        _faker.address,
+        _faker.first_name,
+        _faker.last_name,
+        _random_from_charset,
+        _faker.address,
+        _faker.first_name,
+        _faker.last_name,
+        _faker.first_romanized_name,
+        _faker.last_romanized_name,
+        _faker.phone_number,
+        _faker.company,
+        _faker.email,
+        _faker.url
+    ]
     fn = np.random.choice(choices)
     return fn()
 
