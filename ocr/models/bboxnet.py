@@ -95,24 +95,11 @@ def _metric_iou(y_true, y_pred):
     return tf.reduce_mean(_ious(y_true, y_pred))
 
 
-def __loss_angle(y_true, y_pred):
-    mask = tf.equal(y_true[..., 0], 1.0)
-    y_true = tf.boolean_mask(y_true, mask=mask)
-    y_pred = tf.tanh(tf.boolean_mask(y_pred, mask=mask))
-    diff_angles = (y_true[..., 5] - y_pred[..., 5]) * 90 / 180 * math.pi
-    return tf.reduce_mean(1 - tf.cos(diff_angles))
-
-
-def _metric_loss_angle(y_true, y_pred):
-    return __loss_angle(y_true, y_pred)
-
-
 def _loss(y_true, y_pred):
     y_true, y_pred = __flatten_and_mask(y_true, y_pred)
     loss_confidence = __loss_confidence(y_true, y_pred)
     loss_iou = __loss_iou(y_true, y_pred)
-    loss_angle = __loss_angle(y_true, y_pred)
-    loss = loss_confidence + loss_iou + loss_angle
+    loss = loss_confidence + loss_iou
     return loss
 
 
@@ -396,7 +383,6 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
                 _metric_iou,
                 _metric_loss_confidence,
                 __loss_iou,
-                _metric_loss_angle,
             ]
         },
     )
@@ -409,9 +395,6 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         lambda x: _reconstruct_boxes(x[..., 1:5], features_pixel=features_pixel),
         name="box",
     )(bbox_output)
-    angles = Activation("tanh", name="angle")(
-        Lambda(lambda x: x[..., 5:6])(bbox_output)
-    )
     MAX_BOX = 32
 
     def nms_fn(args):
@@ -487,30 +470,3 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     prediction_model = Model([image], [nms_boxes, text])
 
     return training_model, prediction_model
-
-
-def create_prediction_model(model, features_pixel):
-    image = model.input
-    x = model.output
-    confidence = Activation("sigmoid")(
-        Lambda(lambda x: x[..., 0:1], name="confidence")(x)
-    )
-    boxes = Lambda(
-        lambda x: _reconstruct_boxes(x[..., 1:5], features_pixel=features_pixel),
-        name="box",
-    )(x)
-    angles = Activation("tanh")(Lambda(lambda x: x[..., 5:6])(x))
-    prediction_model = Model(image, [confidence, boxes, angles])
-    return prediction_model
-
-
-def extract_boxes(scores, boxes, angle, thres=0.9):
-    scores = np.reshape(scores, (-1))
-    boxes = np.reshape(boxes, (-1, 4))
-    angle = np.reshape(angle, (-1))
-
-    indices = scores > thres
-    scores = scores[indices]
-    boxes = boxes[indices]
-    angle = angle[indices]
-    return scores, boxes, angle
