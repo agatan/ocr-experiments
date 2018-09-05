@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 def _charset():
     # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
-    digits = list("0123456789")
+    digits = list("あいうえお")
     # hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
     # return alphas + digits + hiras
     return digits
@@ -46,20 +46,21 @@ def idx2char(i):
 
 def random_fontname():
     fonts = list(glob.glob("/usr/share/fonts/truetype/ubuntu-font-family/*.ttf"))
-    fonts = [
-        "/System/Library/Fonts/ヒラギノ角ゴシック W0.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W1.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W2.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
-        "/System/Library/Fonts/ヒラギノ角ゴシック W9.ttc",
-        "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
-        "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
-    ]
+    fonts = list(glob.glob("/usr/share/fonts/truetype/ricty-diminished/*.ttf"))
+    # fonts = [
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W0.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W1.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W2.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W4.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W5.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
+    #     "/System/Library/Fonts/ヒラギノ角ゴシック W9.ttc",
+    #     "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
+    #     "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
+    # ]
     return np.random.choice(fonts)
 
 
@@ -85,6 +86,8 @@ def make_image(width, height, bgcolor):
     while len(boxes) < required_boxes:
         text_len = np.random.randint(3, 12)
         text = "".join((np.random.choice(charset) for _ in range(text_len)))
+        if np.random.rand() < 4:
+            text = '\n'.join(text)
 
         top, left = np.random.randint(0, height), np.random.randint(0, width)
         w, h, f = drawn_bb(

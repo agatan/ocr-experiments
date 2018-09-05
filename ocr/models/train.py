@@ -32,7 +32,7 @@ def create_callbacks(checkpoint_path: str, log_dir: str):
     )
     callbacks.append(tf.keras.callbacks.TensorBoard(log_dir))
     callbacks.append(tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5))
-    callbacks.append(tf.keras.callbacks.EarlyStopping(patience=10))
+    callbacks.append(tf.keras.callbacks.EarlyStopping(patience=30))
     return callbacks
 
 

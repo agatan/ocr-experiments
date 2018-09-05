@@ -15,7 +15,7 @@ from tensorflow.python.keras.layers import (
     Dense,
     SeparableConv2D,
     Dropout,
-)
+    Add, concatenate)
 
 from ocr.preprocessing import generator
 from ocr.models.group_norm import GroupNormalization
@@ -186,18 +186,21 @@ def _bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
 _ROI_HEIGHT = 8
 
 
-def _roi_pooling(images, boxes):
-    non_zero_boxes = tf.logical_and(
-        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 1.0),
-        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 1.0),
+def _roi_pooling_horizontal(images, boxes):
+    # width >= height?
+    is_horizontal = tf.greater_equal(
+        boxes[:, 2] - boxes[:, 0], # width
+        boxes[:, 3] - boxes[:, 1], # height
+    )
+    boxes = tf.where(is_horizontal, boxes, tf.zeros_like(boxes))
+    non_zero_boxes = tf.logical_or(
+        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 0.1),
+        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 0.1),
     )
     ratios = (boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1])
     ratios = tf.where(non_zero_boxes, ratios, tf.zeros(tf.shape(boxes)[0]))
-    max_width = tf.cast(tf.ceil(tf.reduce_max(ratios) * _ROI_HEIGHT), tf.int32)
-
-    widths = tf.to_int32(
-        tf.ceil((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]) * _ROI_HEIGHT)
-    )
+    widths = tf.to_int32(tf.ceil(ratios * _ROI_HEIGHT))
+    max_width = tf.reduce_max(widths)
     widths = tf.expand_dims(widths, -1)
 
     def mapper(i):
@@ -206,8 +209,8 @@ def _roi_pooling(images, boxes):
         base_height = tf.to_float(box[3] - box[1])
 
         def cond():
-            return tf.logical_and(
-                tf.greater_equal(base_width, 1.0), tf.greater_equal(base_height, 1.0)
+            return tf.logical_or(
+                tf.greater_equal(base_width, 0.1), tf.greater_equal(base_height, 0.1)
             )
 
         def non_zero():
@@ -232,47 +235,137 @@ def _roi_pooling(images, boxes):
     return tf.map_fn(mapper, indices, dtype=tf.float32), widths
 
 
+_ROI_WIDTH = 8
+
+
+def _roi_pooling_vertical(images, boxes):
+    # width < height?
+    is_vertical = tf.less(
+        boxes[:, 2] - boxes[:, 0],  # width
+        boxes[:, 3] - boxes[:, 1],  # height
+    )
+    boxes = tf.where(is_vertical, boxes, tf.zeros_like(boxes))
+    non_zero_boxes = tf.logical_or(
+        tf.greater_equal(boxes[:, 2] - boxes[:, 0], 0.1),
+        tf.greater_equal(boxes[:, 3] - boxes[:, 1], 0.1),
+    )
+    ratios = (boxes[:, 3] - boxes[:, 1]) / (boxes[:, 2] - boxes[:, 0])
+    ratios = tf.where(non_zero_boxes, ratios, tf.zeros(tf.shape(boxes)[0]))
+    heights = tf.cast(tf.ceil(ratios * _ROI_WIDTH), tf.int32)
+    max_height = tf.reduce_max(heights)
+    heights = tf.expand_dims(heights, -1)
+
+    def mapper(i):
+        box = boxes[i]
+        base_width = tf.to_float(box[2] - box[0])
+        base_height = tf.to_float(box[3] - box[1])
+
+        def cond():
+            return tf.logical_or(
+                tf.greater_equal(base_width, 0.1), tf.greater_equal(base_height, 0.1)
+            )
+
+        def non_zero():
+            width = tf.to_float(_ROI_WIDTH)
+            height = tf.ceil(base_height / base_width * width)
+            map_w = base_width / (width - 1)
+            map_h = base_height / (height - 1)
+            xx = tf.to_float(tf.range(0, tf.to_int32(width))) * map_w + box[0]
+            yy = tf.to_float(tf.range(0, tf.to_int32(height))) * map_h + box[1]
+            pooled = _bilinear_interpolate(images[i], xx, yy)
+            padded = tf.pad(
+                pooled, [[0, max_height - tf.to_int32(height)], [0, 0], [0, 0]]
+            )
+            return padded
+
+        def zero():
+            return tf.zeros((max_height, _ROI_WIDTH, images.shape[-1]))
+
+        return tf.cond(cond(), non_zero, zero)
+
+    indices = tf.range(tf.shape(images)[0])
+    return tf.map_fn(mapper, indices, dtype=tf.float32), heights
+
+
 def _ctc_lambda_func(args):
     y_pred, labels, input_length, label_length = args
     return tf.keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
-def _text_recognition_model(input_shape, n_vocab, name=None):
-    roi = Input(shape=input_shape, name="roi")
+def _text_recognition_horizontal_model(input_shape, n_vocab):
+    roi = Input(shape=input_shape, name="roi_horizontal")
     x = roi
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = GroupNormalization()(x)
+        # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
+        # x = GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = SeparableConv2D(c, 3, padding="same")(x)
-        x = GroupNormalization()(x)
+        # x = GroupNormalization()(x)
         x = LeakyReLU()(x)
         x = MaxPooling2D((2, 1))(x)
     x = Lambda(lambda v: tf.squeeze(v, 1))(x)
     x = Dropout(0.2)(x)
-    output = Dense(n_vocab, activation="softmax", name=name)(x)
-    return Model(roi, output)
+    output = Dense(n_vocab, activation="softmax")(x)
+    return Model(roi, output, name='horizontal_model')
+
+
+def _text_recognition_vertical_model(input_shape, n_vocab):
+    roi = Input(shape=input_shape, name="roi_vertical")
+    x = roi
+    for c in [64, 128, 256]:
+        x = SeparableConv2D(c, 3, padding="same")(x)
+        # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
+        # GroupNormalization()(x)
+        x = LeakyReLU()(x)
+        x = SeparableConv2D(c, 3, padding="same")(x)
+        # x = GroupNormalization()(x)
+        x = LeakyReLU()(x)
+        x = MaxPooling2D((1, 2))(x)
+    x = Lambda(lambda v: tf.squeeze(v, 2))(x)
+    x = Dropout(0.2)(x)
+    output = Dense(n_vocab, activation="softmax")(x)
+    return Model(roi, output, name='vertical_model')
+
+
+def _pad_horizontal_and_vertical(args):
+    horizontal, vertical = args
+    maximum = tf.maximum(tf.shape(horizontal)[1], tf.shape(vertical)[1])
+    horizontal = tf.pad(horizontal, [[0, 0], [0, maximum - tf.shape(horizontal)[1]], [0, 0]])
+    vertical = tf.pad(vertical, [[0, 0], [0, maximum - tf.shape(vertical)[1]], [0, 0]])
+    return horizontal, vertical
 
 
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10):
     image = Input(shape=input_shape, name="image")
     sampled_text_region = Input(shape=(5,), name="sampled_text_region")
-    labels = Input(shape=(generator.MAX_LENGTH,), name="sampled_text", dtype=tf.float32)
+    labels = Input(shape=(generator.MAX_LENGTH,), name="labels", dtype=tf.float32)
     label_length = Input(shape=(1,), name="label_length", dtype=tf.int64)
 
     fmap = backborn(image)
     bbox_output = Conv2D(6, kernel_size=1, name="bbox")(fmap)
 
     # RoI Pooling and OCR
-    roi, widths = Lambda(lambda args: _roi_pooling(args[0], args[1]))(
+    roi_horizontal, widths = Lambda(lambda args: _roi_pooling_horizontal(args[0], args[1]))(
         [fmap, sampled_text_region]
     )
     widths = Lambda(lambda x: x, name="widths")(widths)
-    text_recognition_model = _text_recognition_model(roi.shape[1:], n_vocab)
-    smashed = text_recognition_model(roi)
+    text_recognition_horizontal_model = _text_recognition_horizontal_model(roi_horizontal.shape[1:], n_vocab)
+    smashed_horizontal = text_recognition_horizontal_model(roi_horizontal)
+    roi_vertical, heights = Lambda(lambda args: _roi_pooling_vertical(args[0], args[1]))(
+        [fmap, sampled_text_region]
+    )
+    heights = Lambda(lambda x: x, name="heights")(heights)
+    text_recognition_vertical_model = _text_recognition_vertical_model(roi_vertical.shape[1:], n_vocab)
+    smashed_vertical = text_recognition_vertical_model(roi_vertical)
+
+    # pad to merge horizontal and vertical tensors
+    smashed_horizontal, smashed_vertical = Lambda(_pad_horizontal_and_vertical)([smashed_horizontal, smashed_vertical])
+    length = Lambda(lambda args: tf.where(tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([widths, heights])
+    smashed = Lambda(lambda args: tf.where(tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([smashed_horizontal, smashed_vertical])
 
     ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name="ctc")(
-        [smashed, labels, widths, label_length]
+        [smashed, labels, length, label_length]
     )
 
     training_model = Model(
@@ -325,31 +418,42 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
         boxes = boxes / features_pixel
 
         ratios = (boxes[..., 2] - boxes[..., 0]) / (boxes[..., 3] - boxes[..., 1])
-        non_zero_boxes = tf.logical_and(
-            tf.greater_equal(boxes[..., 2] - boxes[..., 0], 1.0),
-            tf.greater_equal(boxes[..., 3] - boxes[..., 1], 1.0),
+        vertial_ratios = 1 / ratios
+        non_zero_boxes = tf.logical_or(
+            tf.greater_equal(boxes[..., 2] - boxes[..., 0], 0.1),
+            tf.greater_equal(boxes[..., 3] - boxes[..., 1], 0.1),
         )
         ratios = tf.where(non_zero_boxes, ratios, tf.zeros_like(ratios))
+        vertial_ratios = tf.where(non_zero_boxes, vertial_ratios, tf.zeros_like(vertial_ratios))
         max_width = tf.to_int32(tf.ceil(tf.reduce_max(ratios * _ROI_HEIGHT)))
+        max_height = tf.to_int32(tf.ceil(tf.reduce_max(vertial_ratios * _ROI_WIDTH)))
+        max_length = tf.maximum(max_width, max_height)
 
         def _mapper(i):
             bbs = boxes[:, i, :]
-            roi, widths = _roi_pooling(images, bbs)
-            smashed = text_recognition_model(roi)
+            roi_horizontal, widths = _roi_pooling_horizontal(images, bbs)
+            smashed_horizontal = text_recognition_horizontal_model(roi_horizontal)
+            roi_vertical, heights = _roi_pooling_vertical(images, bbs)
+            smashed_vertical = text_recognition_vertical_model(roi_vertical)
+            widths = tf.squeeze(widths, axis=-1)
+            heights = tf.squeeze(heights, axis=-1)
+            smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical([smashed_horizontal, smashed_vertical])
+            smashed = tf.where(tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical)
+            lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
             cond = tf.not_equal(tf.shape(smashed)[1], 0)
 
             def then_branch():
                 decoded, _probas = tf.keras.backend.ctc_decode(
-                    smashed, tf.squeeze(widths, axis=-1), greedy=False
+                    smashed, lengths, greedy=False
                 )
                 return tf.pad(
                     decoded[0],
-                    [[0, 0], [0, max_width - tf.shape(decoded[0])[1]]],
+                    [[0, 0], [0, max_length - tf.shape(decoded[0])[1]]],
                     constant_values=-1,
                 )
 
             def else_branch():
-                return -tf.ones((tf.shape(bbs)[0], max_width), dtype=tf.int64)
+                return -tf.ones((tf.shape(bbs)[0], max_length), dtype=tf.int64)
 
             return tf.cond(cond, then_branch, else_branch)
 
