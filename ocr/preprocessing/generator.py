@@ -11,7 +11,7 @@ from ocr.data import process
 from ocr.utils.image import resize_image, read_image
 
 
-MAX_LENGTH = 32
+MAX_LENGTH = 64
 
 
 class Generator(object):

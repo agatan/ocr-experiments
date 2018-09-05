@@ -6,7 +6,7 @@ from tensorflow.python.keras.layers import (
     Conv2D,
     Lambda,
     Activation,
-    LeakyReLU,
+    ReLU,
     MaxPooling2D,
     Dense,
     SeparableConv2D,
@@ -280,10 +280,10 @@ def _text_recognition_horizontal_model(input_shape, n_vocab):
         x = SeparableConv2D(c, 3, padding="same")(x)
         # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
         # x = GroupNormalization()(x)
-        x = LeakyReLU()(x)
+        x = ReLU(6.)(x)
         x = SeparableConv2D(c, 3, padding="same")(x)
         # x = GroupNormalization()(x)
-        x = LeakyReLU()(x)
+        x = ReLU(6.)(x)
         x = MaxPooling2D((2, 1))(x)
     x = Lambda(lambda v: tf.squeeze(v, 1))(x)
     x = Dropout(0.2)(x)
@@ -297,11 +297,11 @@ def _text_recognition_vertical_model(input_shape, n_vocab):
     for c in [64, 128, 256]:
         x = SeparableConv2D(c, 3, padding="same")(x)
         # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
-        # GroupNormalization()(x)
-        x = LeakyReLU()(x)
+        # x = GroupNormalization()(x)
+        x = ReLU(6.)(x)
         x = SeparableConv2D(c, 3, padding="same")(x)
         # x = GroupNormalization()(x)
-        x = LeakyReLU()(x)
+        x = ReLU(6.)(x)
         x = MaxPooling2D((1, 2))(x)
     x = Lambda(lambda v: tf.squeeze(v, 2))(x)
     x = Dropout(0.2)(x)
