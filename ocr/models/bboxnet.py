@@ -15,7 +15,9 @@ from tensorflow.python.keras.layers import (
     Dense,
     SeparableConv2D,
     Dropout,
-    Add, concatenate)
+    Add,
+    concatenate,
+)
 
 from ocr.preprocessing import generator
 from ocr.models.group_norm import GroupNormalization
@@ -189,8 +191,7 @@ _ROI_HEIGHT = 8
 def _roi_pooling_horizontal(images, boxes):
     # width >= height?
     is_horizontal = tf.greater_equal(
-        boxes[:, 2] - boxes[:, 0], # width
-        boxes[:, 3] - boxes[:, 1], # height
+        boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1]
     )
     boxes = tf.where(is_horizontal, boxes, tf.zeros_like(boxes))
     non_zero_boxes = tf.logical_or(
@@ -241,8 +242,7 @@ _ROI_WIDTH = 8
 def _roi_pooling_vertical(images, boxes):
     # width < height?
     is_vertical = tf.less(
-        boxes[:, 2] - boxes[:, 0],  # width
-        boxes[:, 3] - boxes[:, 1],  # height
+        boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1]
     )
     boxes = tf.where(is_vertical, boxes, tf.zeros_like(boxes))
     non_zero_boxes = tf.logical_or(
@@ -307,7 +307,7 @@ def _text_recognition_horizontal_model(input_shape, n_vocab):
     x = Lambda(lambda v: tf.squeeze(v, 1))(x)
     x = Dropout(0.2)(x)
     output = Dense(n_vocab, activation="softmax")(x)
-    return Model(roi, output, name='horizontal_model')
+    return Model(roi, output, name="horizontal_model")
 
 
 def _text_recognition_vertical_model(input_shape, n_vocab):
@@ -325,13 +325,15 @@ def _text_recognition_vertical_model(input_shape, n_vocab):
     x = Lambda(lambda v: tf.squeeze(v, 2))(x)
     x = Dropout(0.2)(x)
     output = Dense(n_vocab, activation="softmax")(x)
-    return Model(roi, output, name='vertical_model')
+    return Model(roi, output, name="vertical_model")
 
 
 def _pad_horizontal_and_vertical(args):
     horizontal, vertical = args
     maximum = tf.maximum(tf.shape(horizontal)[1], tf.shape(vertical)[1])
-    horizontal = tf.pad(horizontal, [[0, 0], [0, maximum - tf.shape(horizontal)[1]], [0, 0]])
+    horizontal = tf.pad(
+        horizontal, [[0, 0], [0, maximum - tf.shape(horizontal)[1]], [0, 0]]
+    )
     vertical = tf.pad(vertical, [[0, 0], [0, maximum - tf.shape(vertical)[1]], [0, 0]])
     return horizontal, vertical
 
@@ -346,23 +348,37 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     bbox_output = Conv2D(6, kernel_size=1, name="bbox")(fmap)
 
     # RoI Pooling and OCR
-    roi_horizontal, widths = Lambda(lambda args: _roi_pooling_horizontal(args[0], args[1]))(
-        [fmap, sampled_text_region]
-    )
+    roi_horizontal, widths = Lambda(
+        lambda args: _roi_pooling_horizontal(args[0], args[1])
+    )([fmap, sampled_text_region])
     widths = Lambda(lambda x: x, name="widths")(widths)
-    text_recognition_horizontal_model = _text_recognition_horizontal_model(roi_horizontal.shape[1:], n_vocab)
-    smashed_horizontal = text_recognition_horizontal_model(roi_horizontal)
-    roi_vertical, heights = Lambda(lambda args: _roi_pooling_vertical(args[0], args[1]))(
-        [fmap, sampled_text_region]
+    text_recognition_horizontal_model = _text_recognition_horizontal_model(
+        roi_horizontal.shape[1:], n_vocab
     )
+    smashed_horizontal = text_recognition_horizontal_model(roi_horizontal)
+    roi_vertical, heights = Lambda(
+        lambda args: _roi_pooling_vertical(args[0], args[1])
+    )([fmap, sampled_text_region])
     heights = Lambda(lambda x: x, name="heights")(heights)
-    text_recognition_vertical_model = _text_recognition_vertical_model(roi_vertical.shape[1:], n_vocab)
+    text_recognition_vertical_model = _text_recognition_vertical_model(
+        roi_vertical.shape[1:], n_vocab
+    )
     smashed_vertical = text_recognition_vertical_model(roi_vertical)
 
     # pad to merge horizontal and vertical tensors
-    smashed_horizontal, smashed_vertical = Lambda(_pad_horizontal_and_vertical)([smashed_horizontal, smashed_vertical])
-    length = Lambda(lambda args: tf.where(tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([widths, heights])
-    smashed = Lambda(lambda args: tf.where(tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]))([smashed_horizontal, smashed_vertical])
+    smashed_horizontal, smashed_vertical = Lambda(_pad_horizontal_and_vertical)(
+        [smashed_horizontal, smashed_vertical]
+    )
+    length = Lambda(
+        lambda args: tf.where(
+            tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]
+        )
+    )([widths, heights])
+    smashed = Lambda(
+        lambda args: tf.where(
+            tf.greater(tf.squeeze(widths, axis=-1), 0), args[0], args[1]
+        )
+    )([smashed_horizontal, smashed_vertical])
 
     ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name="ctc")(
         [smashed, labels, length, label_length]
@@ -424,7 +440,9 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
             tf.greater_equal(boxes[..., 3] - boxes[..., 1], 0.1),
         )
         ratios = tf.where(non_zero_boxes, ratios, tf.zeros_like(ratios))
-        vertial_ratios = tf.where(non_zero_boxes, vertial_ratios, tf.zeros_like(vertial_ratios))
+        vertial_ratios = tf.where(
+            non_zero_boxes, vertial_ratios, tf.zeros_like(vertial_ratios)
+        )
         max_width = tf.to_int32(tf.ceil(tf.reduce_max(ratios * _ROI_HEIGHT)))
         max_height = tf.to_int32(tf.ceil(tf.reduce_max(vertial_ratios * _ROI_WIDTH)))
         max_length = tf.maximum(max_width, max_height)
@@ -437,8 +455,12 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
             smashed_vertical = text_recognition_vertical_model(roi_vertical)
             widths = tf.squeeze(widths, axis=-1)
             heights = tf.squeeze(heights, axis=-1)
-            smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical([smashed_horizontal, smashed_vertical])
-            smashed = tf.where(tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical)
+            smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical(
+                [smashed_horizontal, smashed_vertical]
+            )
+            smashed = tf.where(
+                tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical
+            )
             lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
             cond = tf.not_equal(tf.shape(smashed)[1], 0)
 

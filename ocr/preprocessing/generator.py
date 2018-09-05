@@ -201,7 +201,7 @@ class CSVGenerator(Generator):
             result[idx, 2] = annot["xmax"]
             result[idx, 3] = annot["ymax"]
             result[idx, 4] = annot["angle"] / 90.0
-            text.append(annot["text"].replace('\n', ''))
+            text.append(annot["text"].replace("\n", ""))
         return result, text
 
     def char2idx(self, c):
