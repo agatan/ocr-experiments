@@ -136,8 +136,9 @@ class GroupNormalization(tf.keras.layers.Layer):
 
         reshape_group_shape = list(input_shape)
         reshape_group_shape[self.axis] = input_shape[self.axis] // self.groups
-        group_shape = [-1, self.groups]
+        group_shape = [tf.shape(inputs)[0], self.groups]
         group_shape.extend(reshape_group_shape[1:])
+        group_shape = [n if n is not None else -1 for n in group_shape]
         group_reduction_axes = list(range(len(group_shape)))
 
         # Determines whether broadcasting is needed.
@@ -150,7 +151,8 @@ class GroupNormalization(tf.keras.layers.Layer):
 
         inputs = (inputs - mean) / (K.sqrt(variance + self.epsilon))
 
-        original_shape = [-1] + list(input_shape[1:])
+        original_shape = [tf.shape(inputs)[0]] + list(input_shape[1:])
+        original_shape = [n if n is not None else -1 for n in original_shape]
         inputs = K.reshape(inputs, original_shape)
 
         if needs_broadcasting:

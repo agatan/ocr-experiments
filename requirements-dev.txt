@@ -1,9 +1,6 @@
-ipython
-icecream
-jupyter
-ipdb
-jupyter-tensorboard
-jedi
-mypy
-autopep8
 flake8
+mypy
+black
+jedi
+
+boto3
