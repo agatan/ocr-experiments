@@ -104,9 +104,10 @@ def _loss(y_true, y_pred):
 
 
 def _reconstruct_boxes(boxes, features_pixel=8):
-    batch = tf.shape(boxes)[0]
-    width = boxes.shape[2]
-    height = boxes.shape[1]
+    boxes_shape = tf.shape(boxes)
+    batch = boxes_shape[0]
+    width = boxes_shape[2]
+    height = boxes_shape[1]
 
     xx = tf.tile(
         tf.expand_dims(
