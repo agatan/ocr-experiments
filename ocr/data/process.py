@@ -28,6 +28,7 @@ def _charset():
     # digits = list("あいうえお")
     with open(os.path.join(os.path.dirname(__file__), '..', '..', 'charlist.txt'), 'r') as f:
         chars = list(f.read().strip())
+    chars.append(' ')
     # hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
     # return alphas + digits + hiras
     return chars
@@ -42,7 +43,10 @@ def vocab():
 
 
 def char2idx(c):
-    return CHAR2IDX[c]
+    x = CHAR2IDX.get(c, None)
+    if x is None:
+        x = 0
+    return x
 
 
 def text2idx(text: str):
