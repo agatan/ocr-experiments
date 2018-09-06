@@ -222,9 +222,7 @@ _ROI_WIDTH = 8
 
 def _roi_pooling_vertical(images, boxes):
     # width < height?
-    is_vertical = tf.less(
-        boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1]
-    )
+    is_vertical = tf.less(boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1])
     boxes = tf.where(is_vertical, boxes, tf.zeros_like(boxes))
     non_zero_boxes = tf.logical_or(
         tf.greater_equal(boxes[:, 2] - boxes[:, 0], 0.1),

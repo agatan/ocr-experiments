@@ -15,12 +15,13 @@ from tqdm import tqdm
 from faker import Faker
 
 
-_faker = Faker('ja_JP')
+_faker = Faker("ja_JP")
 
 
 def _random_from_charset():
     n = np.random.randint(1, 3)
-    return ''.join(np.random.choice(CHARSET, n))
+    return "".join(np.random.choice(CHARSET, n))
+
 
 def _random_text():
     choices = [
@@ -43,7 +44,7 @@ def _random_text():
         _faker.phone_number,
         _faker.company,
         _faker.email,
-        _faker.url
+        _faker.url,
     ]
     fn = np.random.choice(choices)
     return fn()
@@ -52,9 +53,11 @@ def _random_text():
 def _charset():
     # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
     # digits = list("あいうえお")
-    with open(os.path.join(os.path.dirname(__file__), '..', '..', 'charlist.txt'), 'r') as f:
+    with open(
+        os.path.join(os.path.dirname(__file__), "..", "..", "charlist.txt"), "r"
+    ) as f:
         chars = list(f.read().strip())
-    chars.append(' ')
+    chars.append(" ")
     # hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
     # return alphas + digits + hiras
     return chars
