@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from tensorflow.python.keras import Model
+from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras.layers import (
     Input,
     Conv2D,
@@ -271,39 +271,43 @@ def _ctc_lambda_func(args):
     return tf.keras.backend.ctc_batch_cost(labels, y_pred, input_length, label_length)
 
 
-def _text_recognition_horizontal_model(input_shape, n_vocab):
+def _text_recognition_shared_layers(channels, n_vocab):
+    convs = []
+    for c in [64, 128, 256]:
+        convs.append(Sequential([
+            SeparableConv2D(c, 3, padding='same', input_shape=(None, None, channels)),
+            # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
+            # GroupNormalization(),
+            ReLU(6.),
+            SeparableConv2D(c, 3, padding='same'),
+            ReLU(6.),
+        ]))
+        channels = c
+    dense = Dense(n_vocab, activation='softmax')
+    return convs, dense
+
+
+def _text_recognition_horizontal_model(input_shape, convs, dense):
     roi = Input(shape=input_shape, name="roi_horizontal")
     x = roi
-    for c in [64, 128, 256]:
-        x = SeparableConv2D(c, 3, padding="same")(x)
-        # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
-        # x = GroupNormalization()(x)
-        x = ReLU(6.)(x)
-        x = SeparableConv2D(c, 3, padding="same")(x)
-        # x = GroupNormalization()(x)
-        x = ReLU(6.)(x)
+    for conv in convs:
+        x = conv(x)
         x = MaxPooling2D((2, 1))(x)
     x = Lambda(lambda v: tf.squeeze(v, 1))(x)
     x = Dropout(0.2)(x)
-    output = Dense(n_vocab, activation="softmax")(x)
+    output = dense(x)
     return Model(roi, output, name="horizontal_model")
 
 
-def _text_recognition_vertical_model(input_shape, n_vocab):
+def _text_recognition_vertical_model(input_shape, convs, dense):
     roi = Input(shape=input_shape, name="roi_vertical")
     x = roi
-    for c in [64, 128, 256]:
-        x = SeparableConv2D(c, 3, padding="same")(x)
-        # TODO(agatan): if input_shape contains 0, GroupNormalization can generate nan weights.
-        # x = GroupNormalization()(x)
-        x = ReLU(6.)(x)
-        x = SeparableConv2D(c, 3, padding="same")(x)
-        # x = GroupNormalization()(x)
-        x = ReLU(6.)(x)
+    for conv in convs:
+        x = conv(x)
         x = MaxPooling2D((1, 2))(x)
     x = Lambda(lambda v: tf.squeeze(v, 2))(x)
     x = Dropout(0.2)(x)
-    output = Dense(n_vocab, activation="softmax")(x)
+    output = dense(x)
     return Model(roi, output, name="vertical_model")
 
 
@@ -327,12 +331,13 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     bbox_output = Conv2D(5, kernel_size=1, name="bbox")(fmap)
 
     # RoI Pooling and OCR
+    shared_convs, shared_dense = _text_recognition_shared_layers(fmap.shape[-1], n_vocab)
     roi_horizontal, widths = Lambda(
         lambda args: _roi_pooling_horizontal(args[0], args[1])
     )([fmap, sampled_text_region])
     widths = Lambda(lambda x: x, name="widths")(widths)
     text_recognition_horizontal_model = _text_recognition_horizontal_model(
-        roi_horizontal.shape[1:], n_vocab
+        roi_horizontal.shape[1:], shared_convs, shared_dense
     )
     smashed_horizontal = text_recognition_horizontal_model(roi_horizontal)
     roi_vertical, heights = Lambda(
@@ -340,7 +345,7 @@ def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10
     )([fmap, sampled_text_region])
     heights = Lambda(lambda x: x, name="heights")(heights)
     text_recognition_vertical_model = _text_recognition_vertical_model(
-        roi_vertical.shape[1:], n_vocab
+        roi_vertical.shape[1:], shared_convs, shared_dense
     )
     smashed_vertical = text_recognition_vertical_model(roi_vertical)
 
