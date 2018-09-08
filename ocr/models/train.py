@@ -5,11 +5,11 @@ This is a script to run training and save the trained models.
 from argparse import ArgumentParser
 
 import tensorflow as tf
-from tensorflow.python import debug as tf_debug
+from tensorflow.python import debug as tf_debug, debug
 from tensorflow.python.debug.lib.debug_data import has_inf_or_nan
 
 from ocr.data import process
-from ocr.models import resnet50, mobilenet
+from ocr.models import resnet50, mobilenet, bboxnet_subclass
 from ocr.models.bboxnet import create_model
 from ocr.preprocessing.generator import CSVGenerator
 
@@ -31,8 +31,8 @@ def create_callbacks(checkpoint_path: str, log_dir: str):
         )
     )
     callbacks.append(tf.keras.callbacks.TensorBoard(log_dir))
-    callbacks.append(tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5))
-    callbacks.append(tf.keras.callbacks.EarlyStopping(patience=30))
+    # callbacks.append(tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5))
+    # callbacks.append(tf.keras.callbacks.EarlyStopping(patience=30))
     return callbacks
 
 
@@ -44,31 +44,15 @@ def main():
     )
     parser.add_argument("--debug", default=False, action="store_true")
     parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--epochs", default=50, type=int)
-    parser.add_argument("--checkpoint_path", default="checkpoint-weights.h5", type=str)
-    parser.add_argument("--logdir", default="logs")
+    parser.add_argument("--steps", default=50, type=int)
+    parser.add_argument("--checkpoint_dir", default="checkpoints", type=str)
     parser.add_argument("--out", "-o", default="weights.h5")
-    parser.add_argument("--weight", default=None, type=str)
-    parser.add_argument("--backbone", default="mobilenet", type=str)
     args = parser.parse_args()
 
     if args.debug:
         set_debugger_session()
 
-    if args.backbone == "resnet50":
-        backbone, features_pixel = resnet50.backbone((None, None, 3))
-    elif args.backbone == "mobilenet":
-        backbone, features_pixel = mobilenet.backbone((None, None, 3))
-    else:
-        raise ValueError("Unknown backobne {}".format(args.backbone))
-    training_model, _ = create_model(
-        backbone,
-        features_pixel=features_pixel,
-        input_shape=(None, None, 3),
-        n_vocab=process.vocab(),
-    )
-    if args.weight:
-        training_model.load_weights(args.weight)
+    _, features_pixel = mobilenet.backbone()
 
     gen = CSVGenerator(
         args.train_csv, features_pixel=features_pixel, input_size=(512, 832), aug=True
@@ -76,18 +60,17 @@ def main():
     valid_gen = CSVGenerator(
         args.validation_csv, features_pixel=features_pixel, input_size=(512, 832)
     )
-    steps_per_epoch = (gen.size() - 1) // args.batch_size + 1
-
-    callbacks = create_callbacks(args.checkpoint_path, args.logdir)
-    training_model.fit_generator(
-        gen.batches(args.batch_size, infinite=True),
-        epochs=args.epochs,
-        steps_per_epoch=steps_per_epoch,
-        validation_data=valid_gen.batches(4),
-        validation_steps=50,
-        callbacks=callbacks,
-    )
-    training_model.save_weights(args.out)
+    config = tf.estimator.RunConfig(model_dir=args.checkpoint_dir)
+    estimator = tf.estimator.Estimator(model_fn=bboxnet_subclass.model_fn, model_dir=args.checkpoint_dir, config=config)
+    if args.debug:
+        hooks = [debug.LocalCLIDebugHook()]
+    else:
+        hooks = []
+    train_input_fn = bboxnet_subclass.make_input_fn(gen, batch_size=4)
+    eval_input_fn = bboxnet_subclass.make_input_fn(valid_gen, batch_size=4)
+    train_spec = tf.estimator.TrainSpec(train_input_fn, max_steps=args.steps, hooks=hooks)
+    eval_spec = tf.estimator.EvalSpec(eval_input_fn)
+    tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
 
 
 if __name__ == "__main__":

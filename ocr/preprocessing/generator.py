@@ -142,10 +142,11 @@ class Generator(object):
                 if self.aug:
                     images = self.aug.augment_images(images)
                 images = images.astype(np.float32) / 255.0
-                yield [images, sample_text_regions, sample_text, label_length], {
-                    "bbox": gts,
-                    "ctc": np.zeros(len(targets)),
-                }
+                # yield [images, sample_text_regions, sample_text, label_length], {
+                #     "bbox": gts,
+                #     "ctc": np.zeros(len(targets)),
+                # }
+                yield {'image': images}, {'bbox': gts, 'sampled_text_region': sample_text_regions, 'text': sample_text, 'text_length': label_length}
             if not infinite:
                 break
 

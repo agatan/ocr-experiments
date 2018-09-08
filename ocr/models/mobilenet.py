@@ -21,8 +21,7 @@ def _deconv_block(x, filters, kernel_size=1):
 
 
 def backbone(input_shape=(512, 512, 3)):
-    image = Input(shape=input_shape, name="image")
-    base_model = MobileNet(input_tensor=image, include_top=False, weights="imagenet")
+    base_model = MobileNet(input_shape=input_shape, include_top=False, weights=None)
     x = base_model.output
     x = _deconv_block(x, 512, kernel_size=3)
     y = base_model.layers[81].output
@@ -30,5 +29,5 @@ def backbone(input_shape=(512, 512, 3)):
     x = _deconv_block(x, 256, kernel_size=3)
     y = base_model.layers[39].output
     x = Add()([x, y])
-    model = Model(image, x)
+    model = Model(base_model.input, x)
     return model, 8

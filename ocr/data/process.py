@@ -51,6 +51,7 @@ def _random_text():
 
 
 def _charset():
+    return list("あいうえおかきくけこさしすせそ")
     # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
     # digits = list("あいうえお")
     with open(
