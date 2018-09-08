@@ -19,11 +19,12 @@ _faker = Faker("ja_JP")
 
 
 def _random_from_charset():
-    n = np.random.randint(1, 3)
+    n = np.random.randint(2, 4)
     return "".join(np.random.choice(CHARSET, n))
 
 
 def _random_text():
+    return _random_from_charset()
     choices = [
         _random_from_charset,
         _random_from_charset,
@@ -51,16 +52,16 @@ def _random_text():
 
 
 def _charset():
-    # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
-    # digits = list("あいうえお")
-    with open(
-        os.path.join(os.path.dirname(__file__), "..", "..", "charlist.txt"), "r"
-    ) as f:
-        chars = list(f.read().strip())
-    chars.append(" ")
-    # hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
-    # return alphas + digits + hiras
-    return chars
+    alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
+    digits = list("0123456789")
+    hiras = [chr(x) for x in range(ord('あ'), ord('ゔ')+1)]
+    return alphas + digits + hiras
+    # with open(
+    #     os.path.join(os.path.dirname(__file__), "..", "..", "charlist.txt"), "r"
+    # ) as f:
+    #     chars = list(f.read().strip())
+    # chars.append(" ")
+    # return chars
 
 
 CHARSET = _charset()
@@ -131,7 +132,7 @@ def make_image(width, height, bgcolor):
 
         top, left = np.random.randint(0, height), np.random.randint(0, width)
         w, h, f = drawn_bb(
-            random_fontname(), np.random.randint(16, 32), text, width, height
+            random_fontname(), np.random.randint(20, 36), text, width, height
         )
         if top + h > height or left + w > width:
             continue
@@ -163,7 +164,10 @@ def _dofn(n: int, n_images: int, out: str):
             f, fieldnames=["image", "xmin", "ymin", "xmax", "ymax", "angle", "text"]
         )
         for i in range(n_images):
-            image, coordinates = make_image(832, 512, (255, 255, 255))
+            r = np.random.randint(200, 255)
+            g = np.random.randint(200, 255)
+            b = np.random.randint(200, 255)
+            image, coordinates = make_image(832, 512, (r, g, b))
             image_file = os.path.join(out, "images", f"{n}-{i}.png")
             image.save(image_file)
             for coor in coordinates:
