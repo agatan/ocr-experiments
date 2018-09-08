@@ -11,7 +11,7 @@ from ocr.data import process
 from ocr.utils.image import resize_image, read_image
 
 
-MAX_LENGTH = 32
+MAX_LENGTH = 64
 
 
 class Generator(object):
@@ -155,10 +155,7 @@ def _read_annotations(csvpath: str):
         result = defaultdict(list)
         reader = csv.DictReader(fp)
         for i, row in enumerate(reader):
-            rrow = {
-                col: float(row[col])
-                for col in ["xmin", "xmax", "ymin", "ymax"]
-            }
+            rrow = {col: float(row[col]) for col in ["xmin", "xmax", "ymin", "ymax"]}
             if rrow["xmax"] <= rrow["xmin"]:
                 raise ValueError(
                     f"line {i}: xmax ({rrow['xmax']}) must be greater than xmin ({rrow['xmin']})"

@@ -18,3 +18,5 @@ Flask-BasicAuth
 blinker
 
 tensorflow
+faker
+imgaug
