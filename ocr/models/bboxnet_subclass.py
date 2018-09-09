@@ -392,13 +392,18 @@ def _crop_and_ocr(images, boxes, features_pixel, text_recognition_horizontal_mod
                     constant_values=-1,
                 )
             else:
-                return tf.keras.backend.ctc_batch_cost(labels[:, i, :], smashed, tf.expand_dims(lengths, axis=-1), tf.expand_dims(label_lengths[:, i], axis=-1))
+                indices = tf.squeeze(tf.where(tf.not_equal(label_lengths[:, i], 0)), axis=-1)
+                ls = tf.gather(labels[:, i, :], indices)
+                ss = tf.gather(smashed, indices)
+                input_lengths = tf.gather(lengths, indices)
+                l_lengths = tf.gather(label_lengths[:, i], indices)
+                return tf.reduce_sum(tf.keras.backend.ctc_batch_cost(ls, ss, tf.expand_dims(input_lengths, axis=-1), tf.expand_dims(l_lengths, axis=-1)))
 
         def else_branch():
             if not training:
                 return -tf.ones((tf.shape(bbs)[0], max_length), dtype=tf.int64)
             else:
-                return tf.zeros((tf.shape(bbs)[0], 1))
+                return tf.zeros(())
 
         return tf.cond(cond, then_branch, else_branch)
 
