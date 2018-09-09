@@ -44,9 +44,8 @@ def main():
     )
     parser.add_argument("--debug", default=False, action="store_true")
     parser.add_argument("--batch_size", default=32, type=int)
-    parser.add_argument("--steps", default=50, type=int)
+    parser.add_argument("--max_steps", default=None, type=int)
     parser.add_argument("--checkpoint_dir", default="checkpoints", type=str)
-    parser.add_argument("--out", "-o", default="weights.h5")
     args = parser.parse_args()
 
     if args.debug:
@@ -65,10 +64,10 @@ def main():
     if args.debug:
         hooks = [debug.LocalCLIDebugHook()]
     else:
-        hooks = []
-    train_input_fn = bboxnet_subclass.make_input_fn(gen, batch_size=4)
-    eval_input_fn = bboxnet_subclass.make_input_fn(valid_gen, batch_size=4)
-    train_spec = tf.estimator.TrainSpec(train_input_fn, max_steps=args.steps, hooks=hooks)
+        hooks = [tf.train.StepCounterHook()]
+    train_input_fn = bboxnet_subclass.make_input_fn(gen, batch_size=args.batch_size)
+    eval_input_fn = bboxnet_subclass.make_input_fn(valid_gen, batch_size=args.batch_size)
+    train_spec = tf.estimator.TrainSpec(train_input_fn, max_steps=args.max_steps, hooks=hooks)
     eval_spec = tf.estimator.EvalSpec(eval_input_fn)
     tf.estimator.train_and_evaluate(estimator, train_spec, eval_spec)
 

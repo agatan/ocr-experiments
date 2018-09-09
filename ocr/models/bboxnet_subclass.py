@@ -73,22 +73,31 @@ def model_fn(features, labels, mode, params):
     text_length = tf.expand_dims(text_length, axis=-1)
     ctc_loss = tf.reduce_sum(tf.keras.backend.ctc_batch_cost(text, recog, lengths, text_length))
 
-    bbox_loss = _loss_bbox(bbox_output, bbox_true)
-    loss = tf.Print(ctc_loss + bbox_loss, [tf.shape(x) for x in [ctc_loss, bbox_loss]])
-    # loss = ctc_loss + bbox_loss
+    iou = _metric_iou(bbox_true, bbox_output)
+    accuracy = _metric_confidence_accuracy(bbox_true, bbox_output)
+    bbox_loss = _loss_bbox(bbox_true, bbox_output)
+    loss = ctc_loss + bbox_loss
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
         train_op = tf.train.AdamOptimizer().minimize(loss, global_step=tf.train.get_global_step())
+
+    tf.summary.scalar('iou', iou)
+    tf.summary.scalar('accuracy', accuracy)
+    tf.summary.scalar('loss/bbox', bbox_loss)
+    tf.summary.scalar('loss/ctc', ctc_loss)
 
     return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
 
 def make_input_fn(generator, batch_size=8):
     def input_fn():
-        return tf.data.Dataset.from_generator(lambda: generator.batches(batch_size, infinite=False),
+        return tf.data.Dataset.from_generator(lambda: generator.batches(batch_size, infinite=True),
                                               output_types=({'image': tf.float32},
                                                             {'bbox': tf.float32, 'sampled_text_region': tf.float32,
-                                                             'text': tf.int32, 'text_length': tf.int32}))
+                                                             'text': tf.int32, 'text_length': tf.int32}),
+                                              output_shapes=({'image': tf.TensorShape([None, None, None, 3])},
+                                                             {'bbox': tf.TensorShape([None, None, None, 5]), 'sampled_text_region': tf.TensorShape([None, 4]),
+                                                              'text': tf.TensorShape([None, None]), 'text_length': tf.TensorShape([None])}))
 
     return input_fn
 
@@ -156,7 +165,6 @@ def _roi_pooling_horizontal(images, boxes):
     widths = tf.to_int32(tf.ceil(ratios * _ROI_HEIGHT))
     max_width = tf.reduce_max(widths)
     widths = tf.expand_dims(widths, -1)
-    # widths = tf.Print(widths, [tf.shape(widths), tf.shape(ratios), tf.shape(images)])
 
     def mapper(i):
         box = boxes[i]
@@ -366,6 +374,5 @@ def _loss_bbox(y_true, y_pred):
     y_true, y_pred = __flatten_and_mask(y_true, y_pred)
     loss_confidence = __loss_confidence(y_true, y_pred)
     loss_iou = __loss_iou(y_true, y_pred)
-    # loss = loss_confidence + loss_iou
-    loss = tf.Print(loss_confidence + loss_iou, [loss_confidence, loss_iou], summarize=20)
+    loss = loss_confidence + loss_iou
     return loss
