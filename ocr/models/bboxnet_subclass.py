@@ -9,42 +9,6 @@ from ocr.models import mobilenet
 K = tf.keras.backend
 
 
-class OCRTrainingNet(tf.keras.Model):
-    def __init__(self, backbone: tf.keras.Model, n_vocab: int):
-        super().__init__()
-        self.backbone = backbone
-        self._bbox_conv2d = Conv2D(5, kernel_size=1, name='bbox')
-        self.roi_pooling_horizontal = Lambda(lambda args: _roi_pooling_horizontal(args[0], args[1]))
-        self.text_recognition_horizontal = _text_recognition_horizontal_model(
-            input_shape=(None, None, self.backbone.output.shape[-1]), n_vocab=n_vocab)
-        self.roi_pooling_vertical = Lambda(lambda args: _roi_pooling_vertical(args[0], args[1]))
-        self.text_recognition_vertical = _text_recognition_vertical_model(
-            input_shape=(None, None, self.roi_pooling_horizontal.output.shape[-1]), n_vocab=n_vocab)
-        self.pad_horizontal_and_vertical = Lambda(_pad_horizontal_and_vertical)
-        self.select_nonzero = Lambda(
-            lambda args: tf.where(tf.greater(tf.squeeze(args[0], axis=-1), 0), args[1], args[2]))
-        self._ctc_loss = Lambda(_ctc_lambda_func, output_shape=(1,), name='ctc')
-
-    def call(self, inputs, training=False, mask=None):
-        image, sampled_text_region, labels, label_length = inputs
-        fmap = self.backbone(image, training=training)
-        bbox_output = self._bbox_conv2d(fmap, training=training)
-        roi_horizontal, widths = self.roi_pooling_horizontal([fmap, sampled_text_region], training=training)
-        recog_horizontal = self.text_recognition_horizontal(roi_horizontal, training=training)
-        roi_vertical, heights = self.roi_pooling_vertical([fmap, sampled_text_region], training=training)
-        recog_vertical = self.text_recognition_vertical(roi_vertical, training=training)
-        recog_horizontal, recog_vertical = self.pad_horizontal_and_vertical([recog_horizontal, recog_vertical],
-                                                                            training=training)
-        lengths = self.select_nonzero([widths, widths, heights], training=training)
-        recog = self.select_nonzero([widths, recog_horizontal, recog_vertical], training=training)
-        ctc_loss = self._ctc_loss([recog, labels, lengths, label_length], training=training)
-        return [bbox_output, ctc_loss]
-
-    def get_loss(self, inputs, targets):
-        bbox_output, ctc_loss = self(inputs, training=True)
-        return ctc_loss + _loss_bbox(targets, bbox_output)
-
-
 def model_fn(features, labels, mode, params):
     training = mode == ModeKeys.TRAIN
     tf.keras.backend.set_learning_phase(training)
