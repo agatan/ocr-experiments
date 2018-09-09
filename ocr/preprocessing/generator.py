@@ -12,6 +12,7 @@ from ocr.utils.image import resize_image, read_image
 
 
 MAX_LENGTH = 64
+MAX_BOX = 16
 
 
 class Generator(object):
@@ -116,26 +117,19 @@ class Generator(object):
                     (len(targets),) + self.input_size + (3,), dtype=np.uint8
                 )
                 gts = np.zeros((len(targets),) + self.feature_size + (5,))
-                sample_text_regions = np.zeros((len(targets), 4))
-                sample_text = np.zeros((len(targets), MAX_LENGTH), dtype=np.int32)
-                label_length = np.zeros((len(targets)), dtype=np.int64)
+                text_regions = np.zeros((len(targets), MAX_BOX, 4))
+                texts = np.zeros((len(targets), MAX_BOX, MAX_LENGTH), dtype=np.int32)
+                text_lengths = np.zeros((len(targets), MAX_BOX), dtype=np.int64)
                 for i, target in enumerate(targets):
-                    image, (annots, texts) = (
+                    image, (annots, txts) = (
                         self.load_image(target),
                         self.load_annotation(target),
                     )
                     image, annots = self.resize_entry(image, annots)
-                    sample_annot_index = random.randint(0, len(annots) - 1)
-                    sample_annot = (
-                        annots[sample_annot_index].astype("float32")
-                        / self.feature_pixel
-                    )
-                    sample_text_annot = np.array(
-                        [self.char2idx(c) for c in texts[sample_annot_index]]
-                    )
-                    sample_text_regions[i, ...] = sample_annot
-                    sample_text[i, : len(sample_text_annot)] = sample_text_annot
-                    label_length[i] = len(sample_text_annot)
+                    for j, (text, annot) in enumerate(zip(txts, annots)):
+                        text_regions[i, j, :] = annot.astype("float32") / self.feature_pixel
+                        texts[i, j, :len(text)] = np.array([self.char2idx(c) for c in text])
+                        text_lengths[i, j] = len(text)
                     gt = self.compute_ground_truth(annots)
                     images[i, ...] = image
                     gts[i, ...] = gt
@@ -146,7 +140,7 @@ class Generator(object):
                 #     "bbox": gts,
                 #     "ctc": np.zeros(len(targets)),
                 # }
-                yield {'image': images}, {'bbox': gts, 'sampled_text_region': sample_text_regions, 'text': sample_text, 'text_length': label_length}
+                yield {'image': images}, {'bbox': gts, 'text_regions': text_regions, 'texts': texts, 'text_lengths': text_lengths}
             if not infinite:
                 break
 
