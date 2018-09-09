@@ -97,7 +97,7 @@ def make_input_fn(generator, batch_size=8):
                                                              'text': tf.int32, 'text_length': tf.int32}),
                                               output_shapes=({'image': tf.TensorShape([None, None, None, 3])},
                                                              {'bbox': tf.TensorShape([None, None, None, 5]), 'sampled_text_region': tf.TensorShape([None, 4]),
-                                                              'text': tf.TensorShape([None, None]), 'text_length': tf.TensorShape([None])}))
+                                                              'text': tf.TensorShape([None, None]), 'text_length': tf.TensorShape([None])})).prefetch(32)
 
     return input_fn
 
