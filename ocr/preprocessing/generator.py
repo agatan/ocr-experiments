@@ -116,8 +116,8 @@ class Generator(object):
                 images = np.zeros(
                     (len(targets),) + self.input_size + (3,), dtype=np.uint8
                 )
-                gts = np.zeros((len(targets),) + self.feature_size + (5,))
-                text_regions = np.zeros((len(targets), MAX_BOX, 4))
+                gts = np.zeros((len(targets),) + self.feature_size + (5,), dtype=np.float32)
+                text_regions = np.zeros((len(targets), MAX_BOX, 4), dtype=np.float32)
                 texts = np.zeros((len(targets), MAX_BOX, MAX_LENGTH), dtype=np.int32)
                 text_lengths = np.zeros((len(targets), MAX_BOX), dtype=np.int64)
                 for i, target in enumerate(targets):
@@ -127,7 +127,7 @@ class Generator(object):
                     )
                     image, annots = self.resize_entry(image, annots)
                     for j, (text, annot) in enumerate(zip(txts, annots)):
-                        text_regions[i, j, :] = annot.astype("float32") / self.feature_pixel
+                        text_regions[i, j, :] = annot.astype("float32")
                         texts[i, j, :len(text)] = np.array([self.char2idx(c) for c in text])
                         text_lengths[i, j] = len(text)
                     gt = self.compute_ground_truth(annots)

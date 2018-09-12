@@ -12,39 +12,51 @@ K = tf.keras.backend
 
 def model_fn(features, labels, mode, params):
     training = mode == ModeKeys.TRAIN
-    tf.keras.backend.set_learning_phase(training)
+    tf.keras.backend.set_learning_phase(1 if training else 0)
     image = features['image']
-    bbox_true = labels['bbox']
-    # sampled_text_region, text, text_length = labels['sampled_text_region'], labels['text'], labels['text_length']
-    text_regions, texts, text_lengths = labels['text_regions'], labels['texts'], labels['text_lengths']
+
+    bbox_true, text_regions, texts, text_lengths = None, None, None, None
+    if mode != ModeKeys.PREDICT:
+        bbox_true = labels['bbox']
+        # sampled_text_region, text, text_length = labels['sampled_text_region'], labels['text'], labels['text_length']
+        text_regions, texts, text_lengths = labels['text_regions'], labels['texts'], labels['text_lengths']
+
     # setup models
-    backbone, features_pixel = mobilenet.backbone()
-    text_recognition_horizontal = _text_recognition_horizontal_model(
-        input_shape=(None, None, backbone.output.shape[-1]), n_vocab=process.vocab())
-    text_recognition_vertical = _text_recognition_vertical_model(input_shape=(None, None, backbone.output.shape[-1]),
-                                                                 n_vocab=process.vocab())
+    # backbone, features_pixel = mobilenet.backbone(input_shape=(512 // 2, 832 // 2, 3))
 
     # run
-    fmap = backbone(image, training=training)
+    fmap = mobilenet.backbone(input_tensor=image, training=training)
+    features_pixel = mobilenet.features_pixel()
+    text_recognition_horizontal = _text_recognition_horizontal_model(
+        input_shape=(None, None, fmap.shape[-1]), n_vocab=process.vocab())
+    text_recognition_vertical = _text_recognition_vertical_model(input_shape=(None, None, fmap.shape[-1]),
+                                                                 n_vocab=process.vocab())
+
     bbox_output = Conv2D(5, kernel_size=1, name='bbox')(fmap)
 
-    if mode == ModeKeys.TRAIN or mode == ModeKeys.PREDICT:
+    if mode == ModeKeys.TRAIN or mode == ModeKeys.EVAL:
         # loss
         ctc_loss = _crop_and_ocr(fmap, text_regions, features_pixel, text_recognition_horizontal, text_recognition_vertical, mode=mode, labels=texts, label_lengths=text_lengths)
         iou = _metric_iou(bbox_true, bbox_output)
         accuracy = _metric_confidence_accuracy(bbox_true, bbox_output)
         bbox_loss = _loss_bbox(bbox_true, bbox_output)
         loss = ctc_loss + bbox_loss
-        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-        with tf.control_dependencies(update_ops):
-            train_op = tf.train.AdamOptimizer().minimize(loss, global_step=tf.train.get_global_step())
 
         tf.summary.scalar('iou', iou)
         tf.summary.scalar('accuracy', accuracy)
         tf.summary.scalar('loss/bbox', bbox_loss)
         tf.summary.scalar('loss/ctc', ctc_loss)
 
+        # if mode == ModeKeys.EVAL:
+        #     return tf.estimator.EstimatorSpec(mode=mode, loss=loss)
+
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        print(update_ops)
+        # with tf.control_dependencies(update_ops):
+        optimizer = tf.train.AdamOptimizer()
+        train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
         return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
+
 
     scores = tf.nn.sigmoid(bbox_output[..., 0])
     bounding_boxes = _reconstruct_boxes(bbox_output[..., 1:5], features_pixel=features_pixel)
@@ -365,47 +377,48 @@ def _crop_and_ocr(images, boxes, features_pixel, text_recognition_horizontal_mod
     max_length = tf.maximum(max_width, max_height)
 
     def _mapper(i):
-        bbs = boxes[:, i, :]
-        roi_horizontal, widths = _roi_pooling_horizontal(images, bbs)
-        smashed_horizontal = text_recognition_horizontal_model(roi_horizontal, training=training)
-        roi_vertical, heights = _roi_pooling_vertical(images, bbs)
-        smashed_vertical = text_recognition_vertical_model(roi_vertical, training=training)
-        widths = tf.squeeze(widths, axis=-1)
-        heights = tf.squeeze(heights, axis=-1)
-        smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical(
-            [smashed_horizontal, smashed_vertical]
-        )
-        smashed = tf.where(
-            tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical
-        )
-        lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
-        cond = tf.not_equal(tf.shape(smashed)[1], 0)
+        with tf.control_dependencies(text_recognition_vertical_model.updates + text_recognition_horizontal_model.updates):
+            bbs = boxes[:, i, :]
+            roi_horizontal, widths = _roi_pooling_horizontal(images, bbs)
+            smashed_horizontal = text_recognition_horizontal_model(roi_horizontal, training=training)
+            roi_vertical, heights = _roi_pooling_vertical(images, bbs)
+            smashed_vertical = text_recognition_vertical_model(roi_vertical, training=training)
+            widths = tf.squeeze(widths, axis=-1)
+            heights = tf.squeeze(heights, axis=-1)
+            smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical(
+                [smashed_horizontal, smashed_vertical]
+            )
+            smashed = tf.where(
+                tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical
+            )
+            lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
+            cond = tf.not_equal(tf.shape(smashed)[1], 0)
 
-        def then_branch():
-            if not training:
-                decoded, _probas = tf.keras.backend.ctc_decode(
-                    smashed, lengths, greedy=False
-                )
-                return tf.pad(
-                    decoded[0],
-                    [[0, 0], [0, max_length - tf.shape(decoded[0])[1]]],
-                    constant_values=-1,
-                )
-            else:
-                indices = tf.squeeze(tf.where(tf.not_equal(label_lengths[:, i], 0)), axis=-1)
-                ls = tf.gather(labels[:, i, :], indices)
-                ss = tf.gather(smashed, indices)
-                input_lengths = tf.gather(lengths, indices)
-                l_lengths = tf.gather(label_lengths[:, i], indices)
-                return tf.reduce_sum(tf.keras.backend.ctc_batch_cost(ls, ss, tf.expand_dims(input_lengths, axis=-1), tf.expand_dims(l_lengths, axis=-1)))
+            def then_branch():
+                if not training:
+                    decoded, _probas = tf.keras.backend.ctc_decode(
+                        smashed, lengths, greedy=False
+                    )
+                    return tf.pad(
+                        decoded[0],
+                        [[0, 0], [0, max_length - tf.shape(decoded[0])[1]]],
+                        constant_values=-1,
+                    )
+                else:
+                    indices = tf.squeeze(tf.where(tf.not_equal(label_lengths[:, i], 0)), axis=-1)
+                    ls = tf.gather(labels[:, i, :], indices)
+                    ss = tf.gather(smashed, indices)
+                    input_lengths = tf.gather(lengths, indices)
+                    l_lengths = tf.gather(label_lengths[:, i], indices)
+                    return tf.reduce_mean(tf.keras.backend.ctc_batch_cost(ls, ss, tf.expand_dims(input_lengths, axis=-1), tf.expand_dims(l_lengths, axis=-1)))
 
-        def else_branch():
-            if not training:
-                return -tf.ones((tf.shape(bbs)[0], max_length), dtype=tf.int64)
-            else:
-                return tf.zeros(())
+            def else_branch():
+                if not training:
+                    return -tf.ones((tf.shape(bbs)[0], max_length), dtype=tf.int64)
+                else:
+                    return tf.zeros(())
 
-        return tf.cond(cond, then_branch, else_branch)
+            return tf.cond(cond, then_branch, else_branch)
 
     if not training:
         text_recognition = tf.map_fn(_mapper, tf.range(0, generator.MAX_BOX), dtype=tf.int64)
@@ -422,7 +435,7 @@ def _nms(boxes, scores):
         indices = tf.image.non_max_suppression(bbs, ss, generator.MAX_BOX)
         bbs = tf.gather(bbs, indices)
         ss = tf.gather(ss, indices)
-        return tf.where(tf.greater_equal(ss, 0.5), bbs, tf.zeros_like(bbs))
+        return tf.where(tf.greater_equal(ss, 0.0), bbs, tf.zeros_like(bbs))
     idx = tf.range(0, tf.shape(boxes)[0])
     return tf.map_fn(mapper, idx, dtype=tf.float32)
 

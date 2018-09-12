@@ -51,15 +51,15 @@ def main():
     if args.debug:
         set_debugger_session()
 
-    _, features_pixel = mobilenet.backbone()
+    features_pixel = 8
 
     gen = CSVGenerator(
-        args.train_csv, features_pixel=features_pixel, input_size=(512, 832), aug=True
+        args.train_csv, features_pixel=features_pixel, input_size=(512 // 2, 832 // 2), aug=True
     )
     valid_gen = CSVGenerator(
-        args.validation_csv, features_pixel=features_pixel, input_size=(512, 832)
+        args.validation_csv, features_pixel=features_pixel, input_size=(512 // 2, 832 // 2), aug=True
     )
-    config = tf.estimator.RunConfig(model_dir=args.checkpoint_dir)
+    config = tf.estimator.RunConfig(model_dir=args.checkpoint_dir, save_checkpoints_steps=100, keep_checkpoint_max=3)
     estimator = tf.estimator.Estimator(model_fn=bboxnet_subclass.model_fn, model_dir=args.checkpoint_dir, config=config)
     if args.debug:
         hooks = [debug.LocalCLIDebugHook()]
