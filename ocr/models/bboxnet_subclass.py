@@ -41,7 +41,7 @@ def model_fn(features, labels, mode, params):
         accuracy = _metric_confidence_accuracy(bbox_true, bbox_output)
         bbox_loss = _loss_bbox(bbox_true, bbox_output)
         loss = ctc_loss + bbox_loss
-
+        # loss = bbox_loss
         tf.summary.scalar('iou', iou)
         tf.summary.scalar('accuracy', accuracy)
         tf.summary.scalar('loss/bbox', bbox_loss)
@@ -52,10 +52,10 @@ def model_fn(features, labels, mode, params):
 
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         print(update_ops)
-        # with tf.control_dependencies(update_ops):
-        optimizer = tf.train.AdamOptimizer()
-        train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
-        return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
+        with tf.control_dependencies(update_ops):
+            optimizer = tf.train.AdamOptimizer()
+            train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step())
+            return tf.estimator.EstimatorSpec(mode=mode, loss=loss, train_op=train_op)
 
 
     scores = tf.nn.sigmoid(bbox_output[..., 0])
@@ -139,8 +139,11 @@ def _roi_pooling_horizontal(images, boxes):
         tf.greater_equal(boxes[:, 2] - boxes[:, 0], 0.1),
         tf.greater_equal(boxes[:, 3] - boxes[:, 1], 0.1),
     )
-    nanable_ratios = (boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1])
-    ratios = tf.where(non_zero_boxes, nanable_ratios, tf.zeros_like(nanable_ratios))
+    base_widths = tf.where(tf.less_equal(boxes[:, 2] - boxes[:, 0], 0.0), 1e-4 * tf.ones_like(boxes[:, 2]), boxes[:, 2] - boxes[:, 0])
+    base_heights = tf.where(tf.less_equal(boxes[:, 3] - boxes[:, 1], 0.0), 1e-4 * tf.ones_like(boxes[:, 3]), boxes[:, 3] - boxes[:, 1])
+    ratios = tf.where(non_zero_boxes, base_widths / base_heights, tf.zeros_like(base_widths))
+    # nanable_ratios = (boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1])
+    # ratios = tf.where(non_zero_boxes, nanable_ratios, tf.zeros_like(nanable_ratios))
     widths = tf.to_int32(tf.ceil(ratios * _ROI_HEIGHT))
     max_width = tf.reduce_max(widths)
     widths = tf.expand_dims(widths, -1)
@@ -188,8 +191,11 @@ def _roi_pooling_vertical(images, boxes):
         tf.greater_equal(boxes[:, 2] - boxes[:, 0], 0.1),
         tf.greater_equal(boxes[:, 3] - boxes[:, 1], 0.1),
     )
-    nanable_ratios = (boxes[:, 3] - boxes[:, 1]) / (boxes[:, 2] - boxes[:, 0])
-    ratios = tf.where(non_zero_boxes, nanable_ratios, tf.zeros_like(nanable_ratios))
+    # nanable_ratios = (boxes[:, 3] - boxes[:, 1]) / (boxes[:, 2] - boxes[:, 0])
+    # ratios = tf.where(non_zero_boxes, nanable_ratios, tf.zeros_like(nanable_ratios))
+    base_widths = tf.where(tf.less_equal(boxes[:, 2] - boxes[:, 0], 0.0), 1e-4 * tf.ones_like(boxes[:, 2]), boxes[:, 2] - boxes[:, 0])
+    base_heights = tf.where(tf.less_equal(boxes[:, 3] - boxes[:, 1], 0.0), 1e-4 * tf.ones_like(boxes[:, 3]), boxes[:, 3] - boxes[:, 1])
+    ratios = tf.where(non_zero_boxes, base_heights / base_widths, tf.zeros_like(base_widths))
     heights = tf.cast(tf.ceil(ratios * _ROI_WIDTH), tf.int32)
     max_height = tf.reduce_max(heights)
     heights = tf.expand_dims(heights, -1)
@@ -377,48 +383,47 @@ def _crop_and_ocr(images, boxes, features_pixel, text_recognition_horizontal_mod
     max_length = tf.maximum(max_width, max_height)
 
     def _mapper(i):
-        with tf.control_dependencies(text_recognition_vertical_model.updates + text_recognition_horizontal_model.updates):
-            bbs = boxes[:, i, :]
-            roi_horizontal, widths = _roi_pooling_horizontal(images, bbs)
-            smashed_horizontal = text_recognition_horizontal_model(roi_horizontal, training=training)
-            roi_vertical, heights = _roi_pooling_vertical(images, bbs)
-            smashed_vertical = text_recognition_vertical_model(roi_vertical, training=training)
-            widths = tf.squeeze(widths, axis=-1)
-            heights = tf.squeeze(heights, axis=-1)
-            smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical(
-                [smashed_horizontal, smashed_vertical]
-            )
-            smashed = tf.where(
-                tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical
-            )
-            lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
-            cond = tf.not_equal(tf.shape(smashed)[1], 0)
+        bbs = boxes[:, i, :]
+        roi_horizontal, widths = _roi_pooling_horizontal(images, bbs)
+        smashed_horizontal = text_recognition_horizontal_model(roi_horizontal, training=training)
+        roi_vertical, heights = _roi_pooling_vertical(images, bbs)
+        smashed_vertical = text_recognition_vertical_model(roi_vertical, training=training)
+        widths = tf.squeeze(widths, axis=-1)
+        heights = tf.squeeze(heights, axis=-1)
+        smashed_horizontal, smashed_vertical = _pad_horizontal_and_vertical(
+            [smashed_horizontal, smashed_vertical]
+        )
+        smashed = tf.where(
+            tf.not_equal(widths, 0), smashed_horizontal, smashed_vertical
+        )
+        lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
+        cond = tf.not_equal(tf.shape(smashed)[1], 0)
 
-            def then_branch():
-                if not training:
-                    decoded, _probas = tf.keras.backend.ctc_decode(
-                        smashed, lengths, greedy=False
-                    )
-                    return tf.pad(
-                        decoded[0],
-                        [[0, 0], [0, max_length - tf.shape(decoded[0])[1]]],
-                        constant_values=-1,
-                    )
-                else:
-                    indices = tf.squeeze(tf.where(tf.not_equal(label_lengths[:, i], 0)), axis=-1)
-                    ls = tf.gather(labels[:, i, :], indices)
-                    ss = tf.gather(smashed, indices)
-                    input_lengths = tf.gather(lengths, indices)
-                    l_lengths = tf.gather(label_lengths[:, i], indices)
-                    return tf.reduce_mean(tf.keras.backend.ctc_batch_cost(ls, ss, tf.expand_dims(input_lengths, axis=-1), tf.expand_dims(l_lengths, axis=-1)))
+        def then_branch():
+            if not training:
+                decoded, _probas = tf.keras.backend.ctc_decode(
+                    smashed, lengths, greedy=False
+                )
+                return tf.pad(
+                    decoded[0],
+                    [[0, 0], [0, max_length - tf.shape(decoded[0])[1]]],
+                    constant_values=-1,
+                )
+            else:
+                indices = tf.squeeze(tf.where(tf.not_equal(label_lengths[:, i], 0)), axis=-1)
+                ls = tf.gather(labels[:, i, :], indices)
+                ss = tf.gather(smashed, indices)
+                input_lengths = tf.gather(lengths, indices)
+                l_lengths = tf.gather(label_lengths[:, i], indices)
+                return tf.reduce_mean(tf.keras.backend.ctc_batch_cost(ls, ss, tf.expand_dims(input_lengths, axis=-1), tf.expand_dims(l_lengths, axis=-1)))
 
-            def else_branch():
-                if not training:
-                    return -tf.ones((tf.shape(bbs)[0], max_length), dtype=tf.int64)
-                else:
-                    return tf.zeros(())
+        def else_branch():
+            if not training:
+                return -tf.ones((tf.shape(bbs)[0], max_length), dtype=tf.int64)
+            else:
+                return tf.zeros(())
 
-            return tf.cond(cond, then_branch, else_branch)
+        return tf.cond(cond, then_branch, else_branch)
 
     if not training:
         text_recognition = tf.map_fn(_mapper, tf.range(0, generator.MAX_BOX), dtype=tf.int64)
@@ -435,7 +440,7 @@ def _nms(boxes, scores):
         indices = tf.image.non_max_suppression(bbs, ss, generator.MAX_BOX)
         bbs = tf.gather(bbs, indices)
         ss = tf.gather(ss, indices)
-        return tf.where(tf.greater_equal(ss, 0.0), bbs, tf.zeros_like(bbs))
+        return tf.where(tf.greater_equal(ss, 0.3), bbs, tf.zeros_like(bbs))
     idx = tf.range(0, tf.shape(boxes)[0])
     return tf.map_fn(mapper, idx, dtype=tf.float32)
 

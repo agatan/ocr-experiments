@@ -27,7 +27,8 @@ def _conv_block(inputs, filters, alpha, kernel=(3, 3), strides=(1, 1), training=
         use_bias=False,
         strides=strides,
         name='conv1')(x)
-    x = BatchNormalization(axis=channel_axis, name='conv1_bn')(x, training=training)
+    # explicitly use tf.layers.BatchNormalization
+    x = tf.layers.BatchNormalization(axis=channel_axis, name='conv1_bn')(x, training=training)
     return ReLU(6, name='conv1_relu')(x)
 
 
@@ -44,7 +45,7 @@ def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha, depth_multiplie
         strides=strides,
         use_bias=False,
         name='conv_dw_%d' % block_id)(x)
-    x = BatchNormalization(axis=channel_axis, name='conv_dw_%d_bn' % block_id)(x, training=training)
+    x = tf.layers.BatchNormalization(axis=channel_axis, name='conv_dw_%d_bn' % block_id)(x, training=training)
     x = ReLU(6, name='conv_dw_%d_relu' % block_id)(x)
 
     x = Conv2D(
@@ -54,17 +55,14 @@ def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha, depth_multiplie
         strides=(1, 1),
         name='conv_pw_%d' % block_id)(
         x)
-    x = BatchNormalization(axis=channel_axis, name='conv_pw_%d_bn' % block_id)(x, training=training)
+    x = tf.layers.BatchNormalization(axis=channel_axis, name='conv_pw_%d_bn' % block_id)(x, training=training)
     return ReLU(6, name='conv_pw_%d_relu' % block_id)(x)
 
 
-def _deconv_block(x, filters, kernel_size=1, training=False):
-    x = DepthwiseConv2D(kernel_size=kernel_size, padding="same", use_bias=False)(x)
-    x = BatchNormalization()(x, training=training)
-    x = LeakyReLU()(x)
+def _deconv_block(x, filters, training=False):
     x = Conv2D(filters, kernel_size=1, use_bias=False)(x)
-    x = BatchNormalization()(x, training=training)
-    x = LeakyReLU()(x)
+    x = tf.layers.BatchNormalization()(x, training=training)
+    x = ReLU(6)(x)
     return UpSampling2D()(x)
 
 
@@ -85,10 +83,13 @@ def backbone(input_tensor, training=True, alpha=1.0, depth_multiplier=1):
     l512 = x
     x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, strides=(2, 2,), block_id=12, training=training)
     x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=13, training=training)
-    x = _deconv_block(x, 512, kernel_size=3, training=training)
+    x = _deconv_block(x, 512, training=training)
     x = x + l512
-    x = _deconv_block(x, 256, kernel_size=3, training=training)
+    x = _deconv_block(x, 256, training=training)
     x = x + l256
+    x = Conv2D(256, kernel_size=3, padding='same')(x)
+    x = tf.layers.BatchNormalization()(x, training=training)
+    x = ReLU(6)(x)
     return x
 
 
@@ -102,4 +103,4 @@ def backbone1(input_tensor, training=True):
     x = tf.layers.BatchNormalization()(x, training=training)
     x = MaxPooling2D()(x)
     x = Dense(256)(x)
-    return x, []
+    return x
