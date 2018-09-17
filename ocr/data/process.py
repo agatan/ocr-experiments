@@ -19,11 +19,12 @@ _faker = Faker("ja_JP")
 
 
 def _random_from_charset():
-    n = np.random.randint(1, 3)
+    n = np.random.randint(2, 4)
     return "".join(np.random.choice(CHARSET, n))
 
 
 def _random_text():
+    return _random_from_charset()
     choices = [
         _random_from_charset,
         _random_from_charset,
@@ -51,6 +52,7 @@ def _random_text():
 
 
 def _charset():
+    return list("あいうえおかきくけこ")
     # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
     # digits = list("あいうえお")
     with open(
@@ -103,6 +105,7 @@ def random_fontname():
         "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
         "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
     ]
+    fonts = [str(x) for x in Path("/usr/share/fonts/truetype/ricty-diminished/").glob("*.ttf")]
     return np.random.choice(fonts)
 
 
@@ -163,7 +166,7 @@ def _dofn(n: int, n_images: int, out: str):
             f, fieldnames=["image", "xmin", "ymin", "xmax", "ymax", "angle", "text"]
         )
         for i in range(n_images):
-            image, coordinates = make_image(832, 512, (255, 255, 255))
+            image, coordinates = make_image(256, 192, (255, 255, 255))
             image_file = os.path.join(out, "images", f"{n}-{i}.png")
             image.save(image_file)
             for coor in coordinates:

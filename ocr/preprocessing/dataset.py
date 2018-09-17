@@ -5,6 +5,8 @@ from collections import defaultdict
 from typing import Tuple, List
 
 import numpy as np
+import torch
+import torch.utils.data
 from imgaug import augmenters as iaa
 
 from ocr.data import process
@@ -14,8 +16,8 @@ from ocr.utils.image import resize_image, read_image
 MAX_LENGTH = 64
 
 
-class Generator(object):
-    def __init__(self, input_size=(512, 512), features_pixel=8, aug=False):
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, input_size=(192, 256), features_pixel=8, aug=False):
         self.input_size = input_size
         assert input_size[0] % features_pixel == 0
         assert input_size[1] % features_pixel == 0
@@ -73,7 +75,7 @@ class Generator(object):
         Returns:
             ground_truth: [H of feature_size, W of feature_size, (confidence, left, top, right, bottom)]
         """
-        ground_truth = np.zeros(self.feature_size + (5,))
+        ground_truth = np.zeros(self.feature_size + (5,), dtype=np.float32)
         for annot in annots:
             xmin = annot[0] / self.feature_pixel
             xmin_ceil = np.maximum(np.math.ceil(xmin), 0)
@@ -103,6 +105,16 @@ class Generator(object):
                 ymin_ceil:ymax_floor, xmin_ceil:xmax_floor, 4
             ] = ymax - np.expand_dims(np.arange(ymin_ceil, ymax_floor), axis=1)
         return ground_truth
+
+    def __len__(self):
+        return self.size()
+
+    def __getitem__(self, idx):
+        image = self.load_image(idx)
+        image = image.astype(np.float32) / 255.
+        annots, texts = self.load_annotation(idx)
+        gt = self.compute_ground_truth(annots)
+        return np.transpose(image, axes=(2, 0, 1)), np.transpose(gt, axes=(2, 0, 1))
 
     def batches(self, batch_size=32, infinite=True):
         while True:
@@ -169,7 +181,7 @@ def _read_annotations(csvpath: str):
     return result
 
 
-class CSVGenerator(Generator):
+class CSVDataset(Dataset):
     def __init__(self, csv_file_path: str, basedir: str = None, **kwargs):
         self.basedir = basedir
         if self.basedir is None:

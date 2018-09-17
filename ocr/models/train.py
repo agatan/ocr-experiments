@@ -4,36 +4,12 @@ This is a script to run training and save the trained models.
 """
 from argparse import ArgumentParser
 
-import tensorflow as tf
-from tensorflow.python import debug as tf_debug
-from tensorflow.python.debug.lib.debug_data import has_inf_or_nan
-
+import torch
 from ocr.data import process
-from ocr.models import resnet50, mobilenet
-from ocr.models.bboxnet import create_model
-from ocr.preprocessing.generator import CSVGenerator
-
-K = tf.keras.backend
-
-
-def set_debugger_session():
-    sess = K.get_session()
-    sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-    sess.add_tensor_filter("has_inf_or_nan", has_inf_or_nan)
-    K.set_session(sess)
-
-
-def create_callbacks(checkpoint_path: str, log_dir: str):
-    callbacks = []
-    callbacks.append(
-        tf.keras.callbacks.ModelCheckpoint(
-            checkpoint_path, save_best_only=True, save_weights_only=True
-        )
-    )
-    callbacks.append(tf.keras.callbacks.TensorBoard(log_dir))
-    callbacks.append(tf.keras.callbacks.ReduceLROnPlateau(factor=0.5, patience=5))
-    callbacks.append(tf.keras.callbacks.EarlyStopping(patience=30))
-    return callbacks
+from ocr.models import net
+from ocr.preprocessing.dataset import CSVDataset
+from ignite.engine import Engine, Events
+from ignite.handlers import ModelCheckpoint, Timer
 
 
 def main():
@@ -47,47 +23,80 @@ def main():
     parser.add_argument("--epochs", default=50, type=int)
     parser.add_argument("--checkpoint_path", default="checkpoint-weights.h5", type=str)
     parser.add_argument("--logdir", default="logs")
+    parser.add_argument("--weights", default=None)
     parser.add_argument("--out", "-o", default="weights.h5")
-    parser.add_argument("--weight", default=None, type=str)
-    parser.add_argument("--backbone", default="mobilenet", type=str)
     args = parser.parse_args()
 
-    if args.debug:
-        set_debugger_session()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if args.backbone == "resnet50":
-        backbone, features_pixel = resnet50.backbone((None, None, 3))
-    elif args.backbone == "mobilenet":
-        backbone, features_pixel = mobilenet.backbone((None, None, 3))
-    else:
-        raise ValueError("Unknown backobne {}".format(args.backbone))
-    training_model, _ = create_model(
-        backbone,
-        features_pixel=features_pixel,
-        input_shape=(None, None, 3),
-        n_vocab=process.vocab(),
+    gen = CSVDataset(
+        args.train_csv, features_pixel=4, input_size=(192, 256), aug=True
     )
-    if args.weight:
-        training_model.load_weights(args.weight)
+    loader = torch.utils.data.DataLoader(gen, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    valid_gen = CSVDataset(
+        args.validation_csv, features_pixel=4, input_size=(192, 256),
+    )
+    valid_loader = torch.utils.data.DataLoader(valid_gen, batch_size=4, shuffle=False)
 
-    gen = CSVGenerator(
-        args.train_csv, features_pixel=features_pixel, input_size=(512, 832), aug=True
-    )
-    valid_gen = CSVGenerator(
-        args.validation_csv, features_pixel=features_pixel, input_size=(512, 832)
-    )
-    steps_per_epoch = (gen.size() - 1) // args.batch_size + 1
+    ocr_net = net.OCRNet().to(device)
+    optimizer = torch.optim.Adam(ocr_net.parameters())
+    if args.weights:
+        ocr_net.load_state_dict(torch.load(args.weights))
 
-    callbacks = create_callbacks(args.checkpoint_path, args.logdir)
-    training_model.fit_generator(
-        gen.batches(args.batch_size, infinite=True),
-        epochs=args.epochs,
-        steps_per_epoch=steps_per_epoch,
-        validation_data=valid_gen.batches(4),
-        validation_steps=50,
-        callbacks=callbacks,
-    )
-    training_model.save_weights(args.out)
+    def step(engine, batch):
+        images, bbox_true = batch
+        images = images.to(device)
+        bbox_true = bbox_true.to(device)
+        ocr_net.zero_grad()
+        bbox_pred = ocr_net(images)
+        loss_confidence = ocr_net.loss_confidence(bbox_pred, bbox_true)
+        loss_iou = ocr_net.loss_iou(bbox_pred, bbox_true)
+        loss = loss_confidence + loss_iou
+        loss.backward()
+        optimizer.step()
+        return {
+            'loss_confidence': loss_confidence.item(),
+            'loss_iou': loss_iou.item(),
+        }
+
+    trainer = Engine(step)
+    checkpoint_handler = ModelCheckpoint(args.checkpoint_path, "networks", save_interval=1, n_saved=5, require_empty=False)
+    timer = Timer(average=True)
+    trainer.add_event_handler(event_name=Events.EPOCH_COMPLETED, handler=checkpoint_handler, to_save={
+        'ocr_net': ocr_net,
+    })
+    timer.attach(trainer, start=Events.EPOCH_STARTED, resume=Events.ITERATION_STARTED, pause=Events.ITERATION_COMPLETED, step=Events.ITERATION_COMPLETED)
+
+    running_avgs = {}
+    @trainer.on(Events.ITERATION_COMPLETED)
+    def update_logs(engine):
+        alpha = 0.98
+        for k, v in engine.state.output.items():
+            old_v = running_avgs.get(k, v)
+            new_v = alpha * old_v + (1 - alpha) * v
+
+            running_avgs[k] = new_v
+
+    PRINT_FREQ = 100
+    @trainer.on(Events.ITERATION_COMPLETED)
+    def print_logs(engine):
+        if (engine.state.iteration - 1) % PRINT_FREQ == 0:
+            columns = running_avgs.keys()
+            values = [str(round(value, 5)) for value in running_avgs.values()]
+
+            message = '[{epoch}][{i}/{max_i}]'.format(epoch=engine.state.epoch,
+                                                      i=(engine.state.iteration % len(loader)),
+                                                      max_i=len(loader))
+            for name, value in zip(columns, values):
+                message += ' | {name}: {value}'.format(name=name, value=value)
+
+            print(message)
+    @trainer.on(Events.EPOCH_COMPLETED)
+    def print_times(engine):
+        print('Epoch {} done. Time per batch: {:.3f}[s]'.format(engine.state.epoch, timer.value()))
+        timer.reset()
+
+    trainer.run(loader, max_epochs=50)
 
 
 if __name__ == "__main__":

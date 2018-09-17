@@ -13,7 +13,7 @@ from tensorflow.python.keras.layers import (
     Dropout,
 )
 
-from ocr.preprocessing import generator
+from ocr.preprocessing import dataset
 
 K = tf.keras.backend
 
@@ -320,7 +320,7 @@ def _pad_horizontal_and_vertical(args):
 def create_model(backborn, features_pixel, input_shape=(512, 512, 3), n_vocab=10):
     image = Input(shape=input_shape, name="image")
     sampled_text_region = Input(shape=(4,), name="sampled_text_region")
-    labels = Input(shape=(generator.MAX_LENGTH,), name="labels", dtype=tf.float32)
+    labels = Input(shape=(dataset.MAX_LENGTH,), name="labels", dtype=tf.float32)
     label_length = Input(shape=(1,), name="label_length", dtype=tf.int64)
 
     fmap = backborn(image)
