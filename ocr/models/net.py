@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from ocr.models import mobilenet
+from ocr.models import mobilenet, roirotate
 
 
 class OCRNet(nn.Module):
@@ -22,6 +22,7 @@ class OCRNet(nn.Module):
                 nn.ReLU6(inplace=True),
             )
 
+        self.roi_rotate = roirotate.RoIRotate(height=8)
         self.ocr_horizontal = nn.Sequential(
             conv_bn_2(self.backbone.last_channel, 64),
             nn.MaxPool2d(kernel_size=(2, 1)),
@@ -47,19 +48,22 @@ class OCRNet(nn.Module):
     def loss_confidence(self, y_pred, y_true):
         alpha = 0.25
         gamma = 2.
-        y_true = y_true[:, 0, ...]
-        y_pred = y_pred[:, 0, ...]
+        y_true = y_true[:, 0, ...].contiguous().view(-1)
+        y_pred = y_pred[:, 0, ...].contiguous().view(-1)
+        mask = y_true != -1.0
+        y_true = y_true[mask]
+        y_pred = y_pred[mask]
         y_pred = torch.sigmoid(y_pred)
         pt1 = (y_true == 1.0).float() * y_pred + (y_true == 0.).float() * 1.
-        pt0 = (y_true == 0.).float() * y_pred + (y_true == 1.).float() * 0.
+        pt0 = (y_true == 0.).float() * y_pred
         pt1_loss = alpha * (1. - pt1).pow(gamma) * torch.log(pt1 + 1e-5)
         pt2_loss = (1 - alpha) * pt0.pow(gamma) * torch.log(1 - pt0 + 1e-5)
-        return (-torch.sum(pt1_loss) - torch.sum(pt2_loss)) / (y_pred.size()[0] * y_pred.size()[1] * y_pred.size()[2])
+        return (-torch.sum(pt1_loss) - torch.sum(pt2_loss)) / y_pred.size()[0]
 
-    def loss_iou(self, y_pred, y_true, eps=1e-5):
-        y_true = y_true.view(-1, 5)
-        y_pred = y_pred.view(-1, 5)
-        mask = y_true[:, 0] == 1.0
+    def ious(self, y_pred, y_true, eps=1e-5):
+        y_true = torch.transpose(y_true, 1, 3).contiguous().view(-1, 5)
+        y_pred = torch.transpose(y_pred, 1, 3).contiguous().view(-1, 5)
+        mask = (y_true[:, 0] == 1.0).detach()
         y_true = y_true[mask]
         y_pred = y_pred[mask]
         area_true = (y_true[:, 3, ...] + y_true[:, 1, ...]) * (y_true[:, 4, ...] + y_true[:, 2, ...])
@@ -77,7 +81,7 @@ class OCRNet(nn.Module):
         )
         area_intersect = x_intersect * y_intersect
         ious = area_intersect / (area_true + area_pred - area_intersect + eps)
-        return -torch.mean(torch.log(ious + eps))
+        return ious
 
     def reconstruct_bbox(self, bbox_output):
         bbox_output = bbox_output.cpu()

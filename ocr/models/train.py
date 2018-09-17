@@ -39,7 +39,7 @@ def main():
     valid_loader = torch.utils.data.DataLoader(valid_gen, batch_size=4, shuffle=False)
 
     ocr_net = net.OCRNet().to(device)
-    optimizer = torch.optim.Adam(ocr_net.parameters())
+    optimizer = torch.optim.Adam(ocr_net.parameters(), lr=1e-2)
     if args.weights:
         ocr_net.load_state_dict(torch.load(args.weights))
 
@@ -50,13 +50,15 @@ def main():
         ocr_net.zero_grad()
         bbox_pred = ocr_net(images)
         loss_confidence = ocr_net.loss_confidence(bbox_pred, bbox_true)
-        loss_iou = ocr_net.loss_iou(bbox_pred, bbox_true)
+        ious = ocr_net.ious(bbox_pred, bbox_true)
+        loss_iou = -torch.mean(torch.log(ious + 1e-5))
         loss = loss_confidence + loss_iou
         loss.backward()
         optimizer.step()
         return {
             'loss_confidence': loss_confidence.item(),
             'loss_iou': loss_iou.item(),
+            'iou': torch.mean(ious).item(),
         }
 
     trainer = Engine(step)
@@ -70,7 +72,7 @@ def main():
     running_avgs = {}
     @trainer.on(Events.ITERATION_COMPLETED)
     def update_logs(engine):
-        alpha = 0.98
+        alpha = 0.90
         for k, v in engine.state.output.items():
             old_v = running_avgs.get(k, v)
             new_v = alpha * old_v + (1 - alpha) * v
@@ -89,14 +91,13 @@ def main():
                                                       max_i=len(loader))
             for name, value in zip(columns, values):
                 message += ' | {name}: {value}'.format(name=name, value=value)
-
             print(message)
     @trainer.on(Events.EPOCH_COMPLETED)
     def print_times(engine):
         print('Epoch {} done. Time per batch: {:.3f}[s]'.format(engine.state.epoch, timer.value()))
         timer.reset()
 
-    trainer.run(loader, max_epochs=50)
+    trainer.run(loader, max_epochs=args.epochs)
 
 
 if __name__ == "__main__":
