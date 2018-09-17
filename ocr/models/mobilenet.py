@@ -1,6 +1,7 @@
 import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def _conv_bn(inp, out, stride):
@@ -118,22 +119,23 @@ class MobileNetV2Backbone(nn.Module):
         super().__init__()
         self.mobilenet = MobileNetV2()
 
-        def upsampling(inp, out):
-            return nn.Sequential(
-                nn.Conv2d(inp, out, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.Upsample(scale_factor=2, mode='bilinear'),
-            )
+        def _conv(inp, out):
+            return nn.Conv2d(inp, out, kernel_size=1, stride=1, padding=0, bias=False)
 
-        self.up1 = upsampling(self.mobilenet.last_channel, 96)
-        self.up2 = upsampling(96, 32)
-        self.up3 = upsampling(32, 24)
+        self.up1 = _conv(self.mobilenet.last_channel, 96)
+        self.up2 = _conv(96, 32)
+        self.up3 = _conv(32, 24)
+        self.last_channel = 24
 
     def forward(self, image):
         p1, p2, p3, p4 = self.mobilenet(image)
-        x = self.up1(p4) + p3
-        x = self.up2(x) + p2
-        x = self.up3(x) + p1
+        x = self._upsampling(self.up1(p4)) + p3
+        x = self._upsampling(self.up2(x)) + p2
+        x = self._upsampling(self.up3(x),) + p1
         return x
+
+    def _upsampling(self, inp):
+        return F.interpolate(inp, scale_factor=2, mode='bilinear', align_corners=False)
 
 
 if __name__ == '__main__':
