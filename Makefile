@@ -49,3 +49,19 @@ dep-dev: requirements-dev.txt ## install development dependencies
 .PHONY: train
 train: ## run training script and sync the models and data to s3
 	python -m ocr.models.train
+
+.PHONY: build
+build: ## build docker image
+	docker build . -t ocr-experiments
+
+.PHONY: docker-run
+docker-run: ## run the docker container
+	docker run --runtime=nvidia -d --rm -v ${PWD}:/root/workdir -w /root/workdir --name ocr-experiments ocr-experiments tail -f /dev/null
+
+.PHONY: docker-stop
+docker-stop: ## stop the docker container
+	docker stop ocr-experiments
+
+.PHONY: docker-bash
+docker-bash: ## run bash in the docker container
+	docker exec -ti ocr-experiments bash
