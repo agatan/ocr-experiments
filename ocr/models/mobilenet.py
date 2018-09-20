@@ -1,106 +1,135 @@
-from tensorflow.python.keras import Input, Model
-from tensorflow.python.keras.applications import MobileNet
-from tensorflow.python.keras.layers import (
-    Conv2D,
-    BatchNormalization,
-    UpSampling2D,
-    Add,
-    LeakyReLU,
-    DepthwiseConv2D,
-    MaxPooling2D, Lambda, Dense, ReLU, ZeroPadding2D)
 import tensorflow as tf
 
 
-K = tf.keras.backend
+def _conv_bn(out, strides, data_format):
+    axis = 1 if data_format == "channels_first" else 3
+    return tf.keras.Sequential([
+        tf.keras.layers.Conv2D(out, 3, strides=strides, padding='same', use_bias=False, data_format=data_format),
+        tf.keras.layers.BatchNormalization(axis=axis),
+        tf.keras.layers.ReLU(max_value=6),
+    ])
 
 
-def _conv_block(inputs, filters, alpha, kernel=(3, 3), strides=(1, 1), training=False):
-    """Convolution block in mobilenet from keras-applications. (modified for estimator API)
-    """
-    channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
-    filters = int(filters * alpha)
-    x = ZeroPadding2D(padding=(1, 1), name='conv1_pad')(inputs)
-    x = Conv2D(
-        filters,
-        kernel,
-        padding='valid',
-        use_bias=False,
-        strides=strides,
-        name='conv1')(x)
-    # explicitly use tf.layers.BatchNormalization
-    x = tf.layers.BatchNormalization(axis=channel_axis, name='conv1_bn')(x, training=training)
-    return ReLU(6, name='conv1_relu')(x)
+def _conv1x1_bn(out, data_format):
+    axis = 1 if data_format == "channels_first" else 3
+    return tf.keras.Sequential([
+        tf.keras.layers.Conv2D(out, 1, use_bias=False, data_format=data_format),
+        tf.keras.layers.BatchNormalization(axis=axis),
+        tf.keras.layers.ReLU(max_value=6),
+    ])
 
 
-def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha, depth_multiplier=2, strides=(1, 1), block_id=1, training=False):
-    """Depthwise Separable Convolution block in mobilenet from keras-applications. (modified for estimator API)
-    """
-    channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
-    pointwise_conv_filters = int(pointwise_conv_filters * alpha)
-    x = ZeroPadding2D(padding=(1, 1), name='conv_pad_%d' % block_id)(inputs)
-    x = DepthwiseConv2D(  # pylint: disable=not-callable
-        (3, 3),
-        padding='valid',
-        depth_multiplier=depth_multiplier,
-        strides=strides,
-        use_bias=False,
-        name='conv_dw_%d' % block_id)(x)
-    x = tf.layers.BatchNormalization(axis=channel_axis, name='conv_dw_%d_bn' % block_id)(x, training=training)
-    x = ReLU(6, name='conv_dw_%d_relu' % block_id)(x)
+class _InvertedResidual(tf.keras.Model):
+    def __init__(self, inp, out, strides, expand_ratio, data_format=None):
+        super(_InvertedResidual, self).__init__()
+        assert strides in [1, 2]
+        self._strides = strides
+        hidden_dim = round(inp * expand_ratio)
+        self._out = out
+        self._use_res_connect = strides == 1 and inp == out
+        self._data_format = data_format or 'channels_last'
+        assert data_format in ['channels_first', 'channels_last']
+        axis = 1 if data_format == "channels_first" else 3
 
-    x = Conv2D(
-        pointwise_conv_filters, (1, 1),
-        padding='same',
-        use_bias=False,
-        strides=(1, 1),
-        name='conv_pw_%d' % block_id)(
-        x)
-    x = tf.layers.BatchNormalization(axis=channel_axis, name='conv_pw_%d_bn' % block_id)(x, training=training)
-    return ReLU(6, name='conv_pw_%d_relu' % block_id)(x)
+        if expand_ratio == 1:
+            self.conv = tf.keras.Sequential([
+                # depth-wise
+                tf.keras.layers.DepthwiseConv2D(3, strides=strides, padding='same', use_bias=False, data_format=data_format),
+                tf.keras.layers.BatchNormalization(axis=axis),
+                tf.keras.layers.ReLU(max_value=6),
+                # point-wise
+                tf.keras.layers.Conv2D(out, 1, strides=1, use_bias=False, data_format=data_format),
+                tf.keras.layers.BatchNormalization(axis=axis),
+            ])
+        else:
+            self.conv = tf.keras.Sequential([
+                # point-wise
+                tf.keras.layers.Conv2D(hidden_dim, 1, strides=1, use_bias=False, data_format=data_format),
+                tf.keras.layers.BatchNormalization(axis=axis),
+                tf.keras.layers.ReLU(max_value=6),
+                # depth-wise
+                tf.keras.layers.DepthwiseConv2D(3, strides=strides, padding='same', use_bias=False, data_format=data_format),
+                tf.keras.layers.BatchNormalization(axis=axis),
+                tf.keras.layers.ReLU(max_value=6),
+                # point-wise
+                tf.keras.layers.Conv2D(out, 1, strides=1, use_bias=False, data_format=data_format),
+                tf.keras.layers.BatchNormalization(axis=axis),
+            ])
 
+    def call(self, inputs, training=True):
+        if self._use_res_connect:
+            return inputs + self.conv(inputs, training=training)
+        return self.conv(inputs, training=training)
 
-def _deconv_block(x, filters, training=False):
-    x = Conv2D(filters, kernel_size=1, use_bias=False)(x)
-    x = tf.layers.BatchNormalization()(x, training=training)
-    x = ReLU(6)(x)
-    return UpSampling2D()(x)
-
-
-def backbone(input_tensor, training=True, alpha=1.0, depth_multiplier=1):
-    x = _conv_block(input_tensor, 32, alpha, strides=(2, 2))
-    x = _depthwise_conv_block(x, 64, alpha, depth_multiplier, block_id=1, training=training)
-    x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, strides=(2, 2), block_id=2, training=training)
-    x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=3, training=training)
-    x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, strides=(2, 2), block_id=4, training=training)
-    x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=5, training=training)
-    l256 = x
-    x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, strides=(2, 2), block_id=6, training=training)
-    x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=7, training=training)
-    x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=8, training=training)
-    x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=9, training=training)
-    x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=10, training=training)
-    x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=11, training=training)
-    l512 = x
-    x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, strides=(2, 2,), block_id=12, training=training)
-    x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=13, training=training)
-    x = _deconv_block(x, 512, training=training)
-    x = x + l512
-    x = _deconv_block(x, 256, training=training)
-    x = x + l256
-    x = Conv2D(256, kernel_size=3, padding='same')(x)
-    x = tf.layers.BatchNormalization()(x, training=training)
-    x = ReLU(6)(x)
-    return x
+    def compute_output_shape(self, input_shape):
+        if self._data_format == 'channels_last':
+            batch_size, height, width, channels = input_shape
+        else:
+            batch_size, channels, height, width = input_shape
+        if self._strides == 2:
+            height = height // tf.Dimension(2)
+            width = width // tf.Dimension(2)
+        if self._data_format == 'channels_last':
+            return tf.TensorShape([batch_size, height, width, self._out])
+        else:
+            return tf.TensorShape([batch_size, self._out, height, width])
 
 
-def features_pixel():
-    return 8
+def _upconv(out, data_format):
+    return tf.keras.Sequential([
+        tf.keras.layers.Conv2D(out, kernel_size=1, data_format=data_format, use_bias=False),
+        tf.keras.layers.UpSampling2D(),
+    ])
 
 
-def backbone1(input_tensor, training=True):
-    x = MaxPooling2D()(input_tensor)
-    x = MaxPooling2D()(x)
-    x = tf.layers.BatchNormalization()(x, training=training)
-    x = MaxPooling2D()(x)
-    x = Dense(256)(x)
-    return x
+class MobileNetV2Backbone(tf.keras.Model):
+    def __init__(self, data_format=None):
+        super(MobileNetV2Backbone, self).__init__()
+        data_format = data_format or 'channels_last'
+        assert data_format in ['channels_first', 'channels_last']
+        input_channel = 32
+        inverted_residual_config = [
+            # t (expand ratio), channel, n (layers), stride
+            [1, 16, 1, 1],
+            [6, 24, 2, 2],
+            [6, 32, 3, 2],
+            [6, 64, 4, 2],
+            [6, 96, 3, 1],
+            [6, 160, 3, 2],
+            [6, 320, 1, 1],
+        ]
+        self.conv1 = _conv_bn(input_channel, 2, data_format=data_format)
+        for i, (t, c, n, s) in enumerate(inverted_residual_config):
+            output_channel = c
+            layers = []
+            for j in range(n):
+                if j == 0:
+                    layers.append(_InvertedResidual(input_channel, output_channel, s, expand_ratio=t, data_format=data_format))
+                else:
+                    layers.append(_InvertedResidual(input_channel, output_channel, 1, expand_ratio=t, data_format=data_format))
+                input_channel = output_channel
+            setattr(self, f'block{i}', tf.keras.Sequential(layers))
+        self.last_channel = 1280
+        self.conv2 = _conv1x1_bn(self.last_channel, data_format=data_format)
+        self.upconv3 = _upconv(96, data_format=data_format)
+        self.upconv2 = _upconv(32, data_format=data_format)
+        self.upconv1 = _upconv(24, data_format=data_format)
+
+    def call(self, inputs, training=True):
+        x = self.conv1(inputs, training=training)
+        x = self.block0(x, training=training)
+        p1 = x = self.block1(x, training=training)
+        p2 = x = self.block2(x, training=training)
+        x = self.block3(x, training=training)
+        p3 = x = self.block4(x, training=training)
+        x = self.block5(x, training=training)
+        x = self.block6(x, training=training)
+        x = self.conv2(x, training=training)
+        x = p3 + self.upconv3(x, training=training)
+        x = p2 + self.upconv2(x, training=training)
+        x = p1 + self.upconv1(x, training=training)
+        return x
+
+    @staticmethod
+    def feature_map_scale():
+        return 4
