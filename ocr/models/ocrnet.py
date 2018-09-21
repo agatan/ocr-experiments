@@ -39,10 +39,10 @@ class _TextRecognition(tf.keras.Model):
 
 
 class OCRTrainNet(tf.keras.Model):
-    def __init__(self, backbone, n_vocab, data_format=None):
+    def __init__(self, backbone_cls, n_vocab, data_format=None):
         super(OCRTrainNet, self).__init__()
-        self.backbone = backbone(data_format=data_format)
-        self.feature_map_scale = backbone.feature_map_scale()
+        self.backbone = backbone_cls(data_format=data_format)
+        self.feature_map_scale = backbone_cls.feature_map_scale()
 
         self.bbox_head = tf.keras.layers.Conv2D(5, kernel_size=1, use_bias=True, name='bbox')
         self.horizontal_text_recognition_branch = _TextRecognition((2, 1), n_vocab=n_vocab, data_format=data_format)
@@ -94,6 +94,70 @@ class OCRTrainNet(tf.keras.Model):
             return tf.cond(cond, true_fn, false_fn)
 
         return tf.reduce_sum(tf.map_fn(mapper, tf.range(0, generator.MAX_BOX), dtype=tf.float32))
+
+
+class OCRNet(tf.keras.Model):
+    def __init__(self, ocr_train_net):
+        super(OCRNet, self).__init__()
+        self.backbone = ocr_train_net.backbone
+        self.feature_map_scale = ocr_train_net.feature_map_scale
+        self.bbox_conv = ocr_train_net.bbox_head
+        self.horizontal_text_recoginition_branch = ocr_train_net.horizontal_text_recognition_branch
+        self.vertical_text_recoginition_branch = ocr_train_net.vertical_text_recognition_branch
+
+    def call(self, inputs, training=False):
+        fmap = self.backbone(inputs, training=training)
+        bbox_output = self.bbox_conv(fmap)
+        scores = tf.nn.sigmoid(bbox_output[..., 0])
+        bounding_boxes = _reconstruct_boxes(bbox_output[..., 1:5], feature_map_scale=self.feature_map_scale)
+        nms_boxes = _nms(bounding_boxes, scores)
+        text = self._crop_and_ocr(fmap, nms_boxes, training=training)
+        return nms_boxes, text
+
+    def _crop_and_ocr(self, fmap, boxes, training=False):
+        boxes = boxes / self.feature_map_scale
+        horizontal_ratios = (boxes[..., 2] - boxes[..., 0]) / (boxes[..., 3] - boxes[..., 1])
+        vertical_ratios = (boxes[..., 3] - boxes[..., 1]) / (boxes[..., 2] - boxes[..., 0])
+        non_zero_boxes = tf.logical_or(
+            tf.greater_equal(boxes[..., 2] - boxes[..., 0], 0.001),
+            tf.greater_equal(boxes[..., 3] - boxes[..., 1], 0.001),
+        )
+        horizontal_ratios = tf.where(non_zero_boxes, horizontal_ratios, tf.zeros_like(horizontal_ratios))
+        vertical_ratios = tf.where(non_zero_boxes, vertical_ratios, tf.zeros_like(vertical_ratios))
+        max_width = tf.to_int32(tf.ceil(tf.reduce_max(horizontal_ratios * _ROI_HEIGHT)))
+        max_height = tf.to_int32(tf.ceil(tf.reduce_max(vertical_ratios * _ROI_HEIGHT)))
+        max_length = tf.maximum(max_width, max_height)
+
+        def mapper(i):
+            box = boxes[:, i, :]
+            horizontal_roi, widths = _roi_pooling_horizontal(fmap, box)
+            horizontal_recog = self.horizontal_text_recoginition_branch(horizontal_roi, training=training)
+            vertical_roi, heights = _roi_pooling_vertical(fmap, box)
+            vertical_recog = self.vertical_text_recoginition_branch(vertical_roi, training=training)
+            widths = tf.squeeze(widths, axis=-1)
+            heights = tf.squeeze(heights, axis=-1)
+            horizontal_recog, vertical_recog = _pad_horizontal_and_vertical(horizontal_recog, vertical_recog)
+            recog = tf.where(
+                tf.not_equal(widths, 0), horizontal_recog, vertical_recog,
+            )
+            lengths = tf.where(tf.not_equal(widths, 0), widths, heights)
+            cond = tf.not_equal(tf.shape(recog)[1], 0)
+
+            def true_fn():
+                decoded, _ = tf.keras.backend.ctc_decode(recog, lengths, greedy=False)
+                return tf.pad(
+                    decoded[0],
+                    [[0, 0], [0, max_length - tf.shape(decoded[0])[1]]],
+                    constant_values=-1,
+                )
+
+            def false_fn():
+                return -tf.ones((tf.shape(box)[0], max_length), dtype=tf.int64)
+
+            return tf.cond(cond, true_fn, false_fn)
+
+        text_recognition = tf.map_fn(mapper, tf.range(0, generator.MAX_BOX), dtype=tf.int64)
+        return tf.transpose(text_recognition, [1, 0, 2])
 
 
 def __loss_confidence(y_true, y_pred):
@@ -316,6 +380,44 @@ def _pad_horizontal_and_vertical(horizontal, vertical):
     return horizontal, vertical
 
 
+def _nms(boxes, scores):
+    def mapper(i):
+        bbs, ss = boxes[i], scores[i]
+        bbs = tf.reshape(bbs, [-1, 4])
+        ss = tf.reshape(ss, [-1])
+        indices = tf.image.non_max_suppression(bbs, ss, generator.MAX_BOX)
+        bbs = tf.gather(bbs, indices)
+        ss = tf.gather(ss, indices)
+        return tf.where(tf.greater_equal(ss, 0.3), bbs, tf.zeros_like(bbs))
+    idx = tf.range(0, tf.shape(boxes)[0])
+    return tf.map_fn(mapper, idx, dtype=tf.float32)
+
+
+def _reconstruct_boxes(boxes, feature_map_scale=8):
+    boxes_shape = tf.shape(boxes)
+    batch = boxes_shape[0]
+    width = boxes_shape[2]
+    height = boxes_shape[1]
+
+    xx = tf.tile(
+        tf.expand_dims(
+            tf.expand_dims(tf.cast(tf.range(0, width), tf.float32), axis=0), axis=0
+        ),
+        (batch, height, 1),
+    )
+    left = xx - boxes[:, :, :, 0]
+    right = xx + boxes[:, :, :, 2]
+    yy = tf.tile(
+        tf.expand_dims(
+            tf.expand_dims(tf.cast(tf.range(0, height), tf.float32), axis=0), axis=-1
+        ),
+        (batch, 1, width),
+    )
+    top = yy - boxes[:, :, :, 1]
+    bottom = yy + boxes[:, :, :, 3]
+    return feature_map_scale * tf.stack([left, top, right, bottom], axis=-1)
+
+
 if __name__ == '__main__':
     import numpy as np
     tf.enable_eager_execution()
@@ -334,9 +436,12 @@ if __name__ == '__main__':
                                                    'texts': tf.TensorShape([None, generator.MAX_BOX, None]),
                                                    'text_lengths': tf.TensorShape([None, generator.MAX_BOX])}))
     model = OCRTrainNet(mobilenet.MobileNetV2Backbone, n_vocab=process.vocab())
+    model = OCRNet(model)
     image = np.random.random((2, 224, 256, 3)).astype(np.float32)
     dummy = np.random.random((2,)).astype(np.float32)
     for x, y in dataset:
+        print(model(x['image']))
+        break
         bbox_loss, ocr_loss = model([x['image'], y['bbox'], y['text_regions'], y['texts'], y['text_lengths']], training=True)
         print(bbox_loss)
         print(ocr_loss)
