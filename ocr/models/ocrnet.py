@@ -13,7 +13,6 @@ class _TextRecognition(tf.keras.Model):
         self.is_horizontal = pool_size == (2, 1)
 
         def _conv_block(channels):
-            axis = 1 if data_format == "channels_first" else 3
             return tf.keras.Sequential([
                 tf.keras.layers.Conv2D(channels, 3, padding='same', use_bias=False, data_format=data_format),
                 tf.keras.layers.ReLU(max_value=6.),
@@ -44,17 +43,17 @@ class OCRTrainNet(tf.keras.Model):
         self.backbone = backbone_cls(data_format=data_format)
         self.feature_map_scale = backbone_cls.feature_map_scale()
 
-        self.bbox_head = tf.keras.layers.Conv2D(5, kernel_size=1, use_bias=True, name='bbox')
+        self.bbox_head = tf.keras.layers.Conv2D(5, kernel_size=3, padding='same', use_bias=True, name='bbox')
         self.horizontal_text_recognition_branch = _TextRecognition((2, 1), n_vocab=n_vocab, data_format=data_format)
         self.vertical_text_recognition_branch = _TextRecognition((1, 2), n_vocab=n_vocab, data_format=data_format)
 
     def call(self, inputs, training=True):
         image, bboxes, text_boxes, text_sequences, text_lengths = inputs
-        fmap = self.backbone(image)
+        fmap = self.backbone(image, training=training)
         bbox_pred = self.bbox_head(fmap)
-        bbox_loss = _loss_bbox(y_true=bboxes, y_pred=bbox_pred)
+        confidence_loss, bbox_loss = _loss_bbox(y_true=bboxes, y_pred=bbox_pred)
         ocr_loss = self._ocr_loss(fmap, text_boxes, text_sequences, text_lengths)
-        return bbox_loss, ocr_loss
+        return confidence_loss, bbox_loss, ocr_loss
 
     def _ocr_loss(self, fmap, text_boxes, text_sequences, text_lengths):
         text_boxes /= self.feature_map_scale
@@ -198,6 +197,7 @@ def _ious(y_true, y_pred):
     ious = area_intersect / (
             area_true + area_pred - area_intersect + tf.keras.backend.epsilon()
     )
+    print(tf.reduce_mean(ious).numpy())
     return ious
 
 
@@ -219,8 +219,7 @@ def _loss_bbox(y_true, y_pred):
     y_true, y_pred = __flatten_and_mask(y_true, y_pred)
     loss_confidence = __loss_confidence(y_true, y_pred)
     loss_iou = __loss_iou(y_true, y_pred)
-    loss = loss_confidence + loss_iou
-    return loss
+    return loss_confidence, loss_iou
 
 
 def _bilinear_interpolate(img: tf.Tensor, x: tf.Tensor, y: tf.Tensor):
@@ -419,12 +418,11 @@ def _reconstruct_boxes(boxes, feature_map_scale=8):
 
 
 if __name__ == '__main__':
-    import numpy as np
     tf.enable_eager_execution()
     gen = CSVGenerator(
-        './data/processed/annotations.csv', features_pixel=mobilenet.MobileNetV2Backbone.feature_map_scale(), input_size=(512 // 2, 832 // 2)
+        './data/processed/annotations.csv', features_pixel=mobilenet.MobileNetV2Backbone.feature_map_scale(), input_size=(192, 256)
     )
-    dataset = tf.data.Dataset.from_generator(lambda: gen.batches(4, infinite=True),
+    dataset = tf.data.Dataset.from_generator(lambda: gen.batches(8, infinite=True),
                                    output_types=({'image': tf.float32},
                                                  {'bbox': tf.float32,
                                                   'text_regions': tf.float32,
@@ -435,13 +433,43 @@ if __name__ == '__main__':
                                                    'text_regions': tf.TensorShape([None, generator.MAX_BOX, 4]),
                                                    'texts': tf.TensorShape([None, generator.MAX_BOX, None]),
                                                    'text_lengths': tf.TensorShape([None, generator.MAX_BOX])}))
-    model = OCRTrainNet(mobilenet.MobileNetV2Backbone, n_vocab=process.vocab())
-    model = OCRNet(model)
-    image = np.random.random((2, 224, 256, 3)).astype(np.float32)
-    dummy = np.random.random((2,)).astype(np.float32)
-    for x, y in dataset:
-        print(model(x['image']))
-        break
-        bbox_loss, ocr_loss = model([x['image'], y['bbox'], y['text_regions'], y['texts'], y['text_lengths']], training=True)
-        print(bbox_loss)
-        print(ocr_loss)
+    train_model = OCRTrainNet(mobilenet.MobileNetV2Backbone, n_vocab=process.vocab())
+    model = OCRNet(train_model)
+    optimizer = tf.train.AdamOptimizer()
+    global_step = tf.train.get_or_create_global_step()
+    checkpointer = tf.train.Checkpoint(
+        train_model=train_model,
+        model=model,
+        optimizer=optimizer,
+        global_step=global_step,
+    )
+    latest_ckpt = tf.train.latest_checkpoint('/tmp/ocr/')
+    checkpointer.restore(latest_ckpt)
+    print("Restore from checkpoint: {}".format(latest_ckpt))
+
+    if False:
+        for x, y in dataset:
+            nms_boxes, texts = model(x['image'], training=False)
+            img = (x['image'][0] * 255).numpy().astype(np.uint8)
+            nms_boxes = nms_boxes[0].numpy().astype(np.int32)
+            print(nms_boxes.shape)
+            import cv2
+            for l, t, r, b in nms_boxes:
+                cv2.rectangle(img, (l, t), (r, b), (255, 0, 0))
+            import matplotlib.pyplot as plt
+            for text in texts[0].numpy():
+                print(''.join(process.idx2char(c) if c != -1 else '' for c in text))
+            plt.imshow(img)
+            plt.show()
+            break
+    for step, (x, y) in enumerate(dataset):
+        with tf.GradientTape() as tape:
+            conf_loss, bbox_loss, ocr_loss = train_model([x['image'], y['bbox'], y['text_regions'], y['texts'], y['text_lengths']], training=True)
+            loss = conf_loss + bbox_loss + ocr_loss
+            grad = tape.gradient(loss, train_model.variables)
+            optimizer.apply_gradients(zip(grad, train_model.variables), global_step=global_step)
+        print('Step: {}, Loss: {:.3f} (Confidence: {:.3f}, Box: {:.3f}, OCR: {:.3f})'.format(global_step.numpy(), loss, conf_loss, bbox_loss, ocr_loss))
+        if step % 10 == 0:
+            checkpointer.save('/tmp/ocr/ckpt')
+        if step == 1000:
+            break
