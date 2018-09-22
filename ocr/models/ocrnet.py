@@ -197,7 +197,8 @@ def _ious(y_true, y_pred):
     ious = area_intersect / (
             area_true + area_pred - area_intersect + tf.keras.backend.epsilon()
     )
-    print(tf.reduce_mean(ious).numpy())
+    if tf.executing_eagerly():
+        print(tf.reduce_mean(ious).numpy())
     return ious
 
 
@@ -318,7 +319,9 @@ def _roi_pooling_horizontal(images, boxes):
         return tf.cond(cond(), non_zero, zero)
 
     indices = tf.range(tf.shape(images)[0])
-    return tf.map_fn(mapper, indices, dtype=tf.float32), widths
+    roi = tf.map_fn(mapper, indices, dtype=tf.float32)
+    roi.set_shape([None, 8, None, images.shape[-1]])
+    return roi, widths
 
 
 def _roi_pooling_vertical(images, boxes):
@@ -367,7 +370,9 @@ def _roi_pooling_vertical(images, boxes):
         return tf.cond(cond(), non_zero, zero)
 
     indices = tf.range(tf.shape(images)[0])
-    return tf.map_fn(mapper, indices, dtype=tf.float32), heights
+    roi = tf.map_fn(mapper, indices, dtype=tf.float32)
+    roi.set_shape([None, None, 8, images.shape[-1]])
+    return roi, heights
 
 
 def _pad_horizontal_and_vertical(horizontal, vertical):
@@ -417,12 +422,41 @@ def _reconstruct_boxes(boxes, feature_map_scale=8):
     return feature_map_scale * tf.stack([left, top, right, bottom], axis=-1)
 
 
-if __name__ == '__main__':
-    tf.enable_eager_execution()
-    gen = CSVGenerator(
-        './data/processed/annotations.csv', features_pixel=mobilenet.MobileNetV2Backbone.feature_map_scale(), input_size=(192, 256)
+def model_fn(features, labels, mode):
+    image = features['image']
+    train_model = OCRTrainNet(mobilenet.MobileNetV2Backbone, process.vocab())
+    model = OCRNet(train_model)
+
+    training = mode == tf.estimator.ModeKeys.TRAIN
+    if mode != tf.estimator.ModeKeys.PREDICT:
+        conf_loss, bbox_loss, ocr_loss = train_model(
+            [image, labels['bbox'], labels['text_regions'], labels['texts'], labels['text_lengths']], training=training)
+        loss = conf_loss + bbox_loss + ocr_loss
+        with tf.control_dependencies(train_model.get_updates_for(image)):
+            train_op = tf.train.AdamOptimizer().minimize(loss, global_step=tf.train.get_global_step())
+        return tf.estimator.EstimatorSpec(
+            mode=mode,
+            loss=loss,
+            train_op=train_op,
+        )
+    boxes, texts = model(image)
+    return tf.estimator.EstimatorSpec(
+        mode=mode,
+        predictions={
+            'boxes': boxes,
+            'texts': texts,
+        }
     )
-    dataset = tf.data.Dataset.from_generator(lambda: gen.batches(8, infinite=True),
+
+
+def main_eager():
+    config = tf.ConfigProto(allow_soft_placement=True)
+    config.gpu_options.allow_growth = True
+    tf.enable_eager_execution(config=config)
+    gen = CSVGenerator(
+        './data/processed/annotations.csv', features_pixel=mobilenet.MobileNetV2Backbone.feature_map_scale(), input_size=(192 // 2, 256 // 2)
+    )
+    dataset = tf.data.Dataset.from_generator(lambda: gen.batches(1, infinite=True),
                                    output_types=({'image': tf.float32},
                                                  {'bbox': tf.float32,
                                                   'text_regions': tf.float32,
@@ -473,3 +507,28 @@ if __name__ == '__main__':
             checkpointer.save('/tmp/ocr/ckpt')
         if step == 1000:
             break
+
+
+def main():
+    gen = CSVGenerator(
+        './data/processed/annotations.csv', features_pixel=mobilenet.MobileNetV2Backbone.feature_map_scale(), input_size=(192 // 4, 256 // 4)
+    )
+    def input_fn():
+        return tf.data.Dataset.from_generator(lambda: gen.batches(1, infinite=True),
+                                   output_types=({'image': tf.float32},
+                                                 {'bbox': tf.float32,
+                                                  'text_regions': tf.float32,
+                                                  'texts': tf.int32,
+                                                  'text_lengths': tf.int32}),
+                                   output_shapes=({'image': tf.TensorShape([None, None, None, 3])},
+                                                   {'bbox': tf.TensorShape([None, None, None, 5]),
+                                                   'text_regions': tf.TensorShape([None, generator.MAX_BOX, 4]),
+                                                   'texts': tf.TensorShape([None, generator.MAX_BOX, None]),
+                                                   'text_lengths': tf.TensorShape([None, generator.MAX_BOX])}))
+    estimator = tf.estimator.Estimator(model_fn=model_fn, model_dir='/tmp/ocr')
+    estimator.train(input_fn, max_steps=100)
+    estimator.evaluate(input_fn, steps=16)
+
+
+if __name__ == '__main__':
+    main_eager()

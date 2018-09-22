@@ -52,7 +52,7 @@ def _random_text():
 
 
 def _charset():
-    return list("あ")
+    return list("あいうえおかきくけこ")
     # alphas = ([chr(x) for x in range(ord('a'), ord('z')+1)])
     # digits = list("あいうえお")
     with open(
@@ -105,6 +105,7 @@ def random_fontname():
         "/System/Library/Fonts/ヒラギノ明朝 ProN.ttc",
         "/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc",
     ]
+    fonts = [str(x) for x in Path('/usr/share/fonts/truetype/ricty-diminished').glob('*.ttf')]
     return np.random.choice(fonts)
 
 
@@ -166,7 +167,7 @@ def _dofn(n: int, n_images: int, out: str):
         )
         for i in range(n_images):
             r, g, b = np.random.randint(200, 255, size=3)
-            image, coordinates = make_image(256, 192, (r, g, b))
+            image, coordinates = make_image(256 // 2, 192 // 2, (r, g, b))
             image_file = os.path.join(out, "images", f"{n}-{i}.png")
             image.save(image_file)
             for coor in coordinates:
