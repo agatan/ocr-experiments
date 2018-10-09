@@ -117,19 +117,19 @@ class Generator(object):
                     (len(targets),) + self.input_size + (3,), dtype=np.uint8
                 )
                 gts = np.zeros((len(targets),) + self.feature_size + (5,), dtype=np.float32)
-                text_regions = np.zeros((len(targets), MAX_BOX, 4), dtype=np.float32)
-                texts = np.zeros((len(targets), MAX_BOX, MAX_LENGTH), dtype=np.int32)
-                text_lengths = np.zeros((len(targets), MAX_BOX), dtype=np.int64)
+                text_regions = np.zeros((len(targets), 4), dtype=np.float32)
+                texts = np.zeros((len(targets), MAX_LENGTH), dtype=np.int32)
+                text_lengths = np.zeros((len(targets)), dtype=np.int64)
                 for i, target in enumerate(targets):
                     image, (annots, txts) = (
                         self.load_image(target),
                         self.load_annotation(target),
                     )
                     image, annots = self.resize_entry(image, annots)
-                    for j, (text, annot) in enumerate(zip(txts, annots)):
-                        text_regions[i, j, :] = annot.astype("float32")
-                        texts[i, j, :len(text)] = np.array([self.char2idx(c) for c in text])
-                        text_lengths[i, j] = len(text)
+                    n = np.random.randint(0, len(annots))
+                    text_regions[i, :] = annots[n].astype('float32')
+                    texts[i, :len(txts[n])] = np.array([self.char2idx(c) for c in txts[n]])
+                    text_lengths[i] = len(txts[n])
                     gt = self.compute_ground_truth(annots)
                     images[i, ...] = image
                     gts[i, ...] = gt

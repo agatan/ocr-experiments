@@ -129,8 +129,8 @@ def make_image(width, height, bgcolor):
     boxes = []
     while len(boxes) < required_boxes:
         text = _random_text()
-        # if not all((ord(c) < 128 for c in text)) and np.random.rand() < 0.5:
-        #     text = "\n".join(text)
+        if not all((ord(c) < 128 for c in text)) and np.random.rand() < 0.5:
+            text = "\n".join(text)
 
         top, left = np.random.randint(0, height), np.random.randint(0, width)
         w, h, f = drawn_bb(
@@ -167,7 +167,7 @@ def _dofn(n: int, n_images: int, out: str):
         )
         for i in range(n_images):
             r, g, b = np.random.randint(200, 255, size=3)
-            image, coordinates = make_image(256 // 2, 192 // 2, (r, g, b))
+            image, coordinates = make_image(256, 192, (r, g, b))
             image_file = os.path.join(out, "images", f"{n}-{i}.png")
             image.save(image_file)
             for coor in coordinates:
