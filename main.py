@@ -121,10 +121,10 @@ class Dataset(data.Dataset):
             padded_texts[i, :len(text)] = torch.tensor(text)
         boxes = torch.zeros((len(annot['boxes']), 4), dtype=torch.int32)
         for i, box in enumerate(annot['boxes']):
-            boxes[i, 0] = box['top']
-            boxes[i, 1] = box['left']
-            boxes[i, 2] = box['top'] + box['height']
-            boxes[i, 3] = box['left'] + box['width']
+            boxes[i, 0] = box['left']
+            boxes[i, 1] = box['top']
+            boxes[i, 2] = box['left'] + box['width']
+            boxes[i, 3] = box['top'] + box['height']
         return image, boxes, padded_texts
 
     def collate_fn(self, data):
