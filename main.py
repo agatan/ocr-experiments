@@ -1,13 +1,16 @@
 import os
 import json
 import math
-import tensorflow as tf
+from typing import List
+
 import numpy as np
 from PIL import Image
+import torch
+import torch.utils.data as data
+import torchvision.transforms as transforms
+
 import datagen
 from group_norm import GroupNormalization
-
-from icecream import ic
 
 
 INPUT_SIZE = np.array([304, 192])
@@ -43,6 +46,102 @@ def box_iou(box1, box2):
     boxBArea = (x22 - x21 + 1) * (y22 - y21 + 1)
     iou = interArea / (boxAArea + np.transpose(boxBArea) - interArea)
     return iou
+
+
+class CharDictionary:
+    def __init__(self, chars):
+        self._char2idx = {"<PAD>": 0, "<UNK>": 1}
+        self._idx2char = ["<PAD>", "<UNK>"]
+        for c in chars:
+            idx = len(self._idx2char)
+            self._char2idx[c] = idx
+            self._idx2char.append(c)
+        self._char2idx["<BLANK>"] = len(self._idx2char)
+        self._idx2char.append("<BLANK>")
+        self.pad_value = 0
+        self.unknown_value = 1
+        self.blank_value = self.char2idx("<BLANK>")
+
+    def char2idx(self, c):
+        return self._char2idx.get(c, self.unknown_value)
+
+    def idx2char(self, i):
+        if i < len(self._idx2char):
+            return self._idx2char[i]
+        return "<UNK>"
+
+
+def _has_file_allowed_extension(filename: str, extensions: List[str]):
+    filename = filename.lower()
+    return any(filename.endswith(ext) for ext in extensions)
+
+
+class Dataset(data.Dataset):
+    def __init__(
+            self,
+            root,
+            chardict,
+            transform=None,
+            image_extensions=["jpg", "jpeg", "png"],
+    ):
+        super().__init__()
+        self.root = os.path.expanduser(root)
+        self.chardict = chardict
+        self.transform = transform
+        self._gather_files(image_extensions)
+
+    def _gather_files(self, image_extensions):
+        candidates = [os.path.join(self.root, f) for f in os.listdir(self.root) if _has_file_allowed_extension(f, image_extensions)]
+        samples = []
+        for candidate in candidates:
+            index = candidate.rfind(".")
+            if index < 0:
+                continue
+            annot = candidate[:index] + ".json"
+            if os.path.exists(annot):
+                samples.append((candidate, annot))
+        self.samples = samples
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        imagefile, annotfile = self.samples[index]
+        with open(imagefile, "rb") as f:
+            image = Image.open(f).convert("RGB")
+        if self.transform is not None:
+            image = self.transform(image)
+        with open(annotfile, "r") as f:
+            annot = json.load(f)
+        length_of_longest_text = max((len(box['text']) for box in annot['boxes']))
+        padded_texts = torch.zeros((len(annot['boxes']), length_of_longest_text), dtype=torch.int32)
+        padded_texts[...] = self.chardict.pad_value
+        for i, box in enumerate(annot['boxes']):
+            text = [self.chardict.char2idx(c) for c in box['text']]
+            padded_texts[i, :len(text)] = torch.tensor(text)
+        boxes = torch.zeros((len(annot['boxes']), 4), dtype=torch.int32)
+        for i, box in enumerate(annot['boxes']):
+            boxes[i, 0] = box['top']
+            boxes[i, 1] = box['left']
+            boxes[i, 2] = box['top'] + box['height']
+            boxes[i, 3] = box['left'] + box['width']
+        return image, boxes, padded_texts
+
+    def collate_fn(self, data):
+        batch_size = len(data)
+        images, boxes, texts = zip(*data)
+        images = torch.stack(images, dim=0)
+        max_box = max((len(bs) for bs in boxes))
+        padded_boxes = torch.zeros((batch_size, max_box, 4), dtype=torch.int32)
+        max_text_length = max((text.size()[-1] for text in texts))
+        padded_texts = torch.zeros((batch_size, max_box, max_text_length))
+        padded_texts[...] = self.chardict.pad_value
+        for i, bs in enumerate(boxes):
+            padded_boxes[i, :len(bs), :] = bs
+        for i, ts in enumerate(texts):
+            padded_texts[i, :len(ts), :ts.size()[-1]] = ts
+        return images, padded_boxes, padded_texts
+
 
 
 class Sequence(tf.keras.utils.Sequence):
