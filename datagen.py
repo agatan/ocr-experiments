@@ -1,5 +1,6 @@
 import json
 import glob
+import subprocess
 
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -31,9 +32,17 @@ def idx2char(i):
     return CHARSET[i - 1]
 
 
-def random_fontname():
-    fonts = list(glob.glob("/usr/share/fonts/truetype/ubuntu-font-family/*.ttf"))
-    return np.random.choice(fonts)
+def _font_names(lang=None):
+    fc_list = "fc-list"
+    if lang:
+        fc_list = "fc-list :lang={}".format(lang)
+    command = "{} | cut -d : -f 1 | grep ttf".format(fc_list)
+    resp = subprocess.check_output(["bash", "-c", command]).decode("utf-8")
+    return [font.strip() for font in resp.split("\n") if font.strip()]
+
+
+def random_fontname(font_names):
+    return np.random.choice(font_names)
 
 
 def drawn_bb(fontname, fontsize, text, total_width, total_height):
@@ -41,12 +50,10 @@ def drawn_bb(fontname, fontsize, text, total_width, total_height):
     draw = ImageDraw.Draw(dummy)
     font = ImageFont.truetype(fontname, fontsize, encoding="unic")
     w, h = draw.textsize(text, font)
-    del draw
-    del dummy
     return w, h, font
 
 
-def make_image(width, height, bgcolor):
+def make_image(fonts, width, height, bgcolor):
     image = Image.new("RGB", (width, height), bgcolor)
     draw = ImageDraw.Draw(image)
 
@@ -61,13 +68,14 @@ def make_image(width, height, bgcolor):
 
         top, left = np.random.randint(0, height), np.random.randint(0, width)
         w, h, f = drawn_bb(
-            random_fontname(), np.random.randint(8, 24), text, width, height
+            random_fontname(fonts), np.random.randint(
+                8, 24), text, width, height,
         )
         if top + h > height or left + w > width:
             continue
-        if used[left : left + w, top : top + h].sum() > 0:
+        if used[left: left + w, top: top + h].sum() > 0:
             continue
-        used[left : left + w, top : top + h] = 1
+        used[left: left + w, top: top + h] = 1
         draw.text(
             (left, top),
             text,
@@ -95,8 +103,9 @@ def main():
     args = parser.parse_args()
     if not os.path.isdir(args.o):
         os.makedirs(args.o)
+    fonts = _font_names('en')
     for i in tqdm(range(0, args.n), total=args.n):
-        image, boxes = make_image(304, 192, (255, 255, 255))
+        image, boxes = make_image(fonts, 304, 192, (255, 255, 255))
         with open(os.path.join(args.o, f"{i}.json"), "w") as f:
             json.dump(dict(file=f"{i}.png", boxes=boxes), f)
         with open(os.path.join(args.o, f"{i}.png"), "wb") as f:
