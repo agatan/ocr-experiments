@@ -17,6 +17,7 @@ flask
 Flask-BasicAuth
 blinker
 
-tensorflow
 faker
 imgaug
+torchvision_nightly
+-f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html torch_nightly
