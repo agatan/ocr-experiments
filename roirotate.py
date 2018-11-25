@@ -50,12 +50,12 @@ class RoIRotate(nn.Module):
                 max_width = max(max_width, width)
                 each_w = base_width / (width - 1)
                 each_h = base_height / (self.height - 1)
-                xx = torch.arange(0, width, dtype=torch.float32).requires_grad_(
-                    True) * each_w + box[0]
+                xx = torch.arange(
+                    0, width, dtype=torch.float32) * each_w + box[0]
                 xx = xx.view(1, -1).repeat(self.height,
                                            1).view(self.height, width)
-                yy = torch.arange(0, self.height, dtype=torch.float32).requires_grad_(
-                    True) * each_h + box[1]
+                yy = torch.arange(
+                    0, self.height, dtype=torch.float32) * each_h + box[1]
                 yy = yy.view(-1, 1).repeat(1, width).view(self.height, width)
                 result = bilinear_interpolate_torch(img, xx, yy)
                 result_bbs.append(result)
@@ -104,3 +104,26 @@ def bilinear_interpolate_torch(im, x, y):
     wd = (x-x0.float()) * (y-y0.float())
 
     return im_a * wa + im_b * wb + im_c * wc + im_d * wd
+
+
+def main():
+    from PIL import Image
+    import torchvision
+    import torchvision.transforms as transforms
+    img = Image.open("./out/0.png")
+    img = transforms.ToTensor()(img)
+    img = torch.autograd.Variable(img)
+    r = RoIRotate(100, vertical=True)
+
+    bbs = torch.Tensor([[0, 0, 100, 200], [100.1, 0, 300, 200]])
+    boxes, masks = r.forward(img, bbs)
+    torchvision.utils.save_image(boxes.data, 'a.jpg')
+
+    img = Image.open("./out/1.png")
+    img = transforms.ToTensor()(img)
+    img = torch.autograd.Variable(img)
+    r = RoIRotate(100)
+    img = img.unsqueeze(0)
+    bbs = torch.Tensor([[[0, 0, 100, 200], [100, 0, 300, 200]]])
+    boxes, masks = r.forward(img, bbs)
+    torchvision.utils.save_image(boxes.data[0], 'b.jpg')
