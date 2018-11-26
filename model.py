@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -75,23 +76,7 @@ class TrainingModel(nn.Module):
         pooled = pooled.view(batch_size * max_box, channel, height, width)
         mask = mask.view(batch_size * max_box, width)
         recognitions = self.recognition(pooled)
+        targets = targets.view(batch_size * max_box, -1)
+        target_lengths = target_lengths.view(batch_size * max_box)
         recognition_loss = self.recognition_loss(recognitions, mask, targets, target_lengths)
         return detection, recognition_loss
-
-
-import torch
-
-images = torch.randn((1, 3, 224, 256)).requires_grad_(True)
-boxes = torch.Tensor([[
-    [0, 0, 10, 10],
-    [0, 0, 100, 200],
-]])
-targets = torch.randint(1, 10, (2, 4), dtype=torch.long)
-target_lengths = torch.randint(1, 4, (2,), dtype=torch.long)
-
-print(boxes.size())
-model = TrainingModel(ResNet50Backbone(), Detection(), Recognition(10))
-detection, recognition_loss = model(images, boxes, targets, target_lengths)
-print(recognition_loss)
-recognition_loss.backward()
-print(images.grad)
