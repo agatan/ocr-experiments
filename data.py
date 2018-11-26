@@ -116,28 +116,32 @@ class Dataset(data.Dataset):
         padded_texts = torch.zeros(
             (len(annot['boxes']), length_of_longest_text), dtype=torch.int32)
         padded_texts[...] = self.chardict.pad_value
+        target_lengths = torch.zeros((len(annot['boxes']),), dtype=torch.long)
         for i, box in enumerate(annot['boxes']):
             text = [self.chardict.char2idx(c) for c in box['text']]
             padded_texts[i, :len(text)] = torch.tensor(text)
+            target_lengths[i] = len(text)
         boxes = torch.zeros((len(annot['boxes']), 4), dtype=torch.int32)
         for i, box in enumerate(annot['boxes']):
             boxes[i, 0] = box['left']
             boxes[i, 1] = box['top']
             boxes[i, 2] = box['left'] + box['width']
             boxes[i, 3] = box['top'] + box['height']
-        return image, boxes, self._compute_ground_truth_box(boxes), padded_texts
+        return image, boxes, self._compute_ground_truth_box(boxes), padded_texts, target_lengths
 
     def collate_fn(self, data):
         batch_size = len(data)
-        images, boxes, ground_truths, texts = zip(*data)
+        images, boxes, ground_truths, texts, target_lengths = zip(*data)
         images = torch.stack(images, dim=0)
         max_box = max((len(bs) for bs in boxes))
         padded_boxes = torch.zeros((batch_size, max_box, 4), dtype=torch.int32)
         max_text_length = max((text.size()[-1] for text in texts))
-        padded_texts = torch.zeros((batch_size, max_box, max_text_length))
+        padded_texts = torch.zeros((batch_size, max_box, max_text_length), dtype=torch.long)
         padded_texts[...] = self.chardict.pad_value
+        padded_target_lengths = torch.zeros((batch_size, max_box), dtype=torch.long)
         for i, bs in enumerate(boxes):
             padded_boxes[i, :len(bs), :] = bs
         for i, ts in enumerate(texts):
             padded_texts[i, :len(ts), :ts.size()[-1]] = ts
-        return images, padded_boxes, ground_truths, padded_texts
+            padded_target_lengths[i, :len(ts)] = target_lengths[i]
+        return images, padded_boxes, ground_truths, padded_texts, padded_target_lengths
