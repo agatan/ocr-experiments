@@ -56,11 +56,6 @@ class RecognitionLoss(nn.Module):
         log_probs = F.log_softmax(recognitions, dim=2)  # batch_size * max_box, length, vocab
         log_probs = torch.transpose(log_probs, 0, 1)  # length, batch_size * max_box, vocab
         input_lengths = masks.sum(dim=1)
-        indices = target_lengths != 0
-        log_probs = log_probs[:, indices, :]
-        targets = targets[indices]
-        input_lengths = input_lengths[indices]
-        target_lengths = target_lengths[indices]
         return F.ctc_loss(log_probs, targets, input_lengths, target_lengths)
 
 
@@ -80,8 +75,12 @@ class TrainingModel(nn.Module):
         batch_size, max_box, channel, height, width = pooled.size()
         pooled = pooled.view(batch_size * max_box, channel, height, width)
         mask = mask.view(batch_size * max_box, width)
-        recognitions = self.recognition(pooled)
         targets = targets.view(batch_size * max_box, -1)
         target_lengths = target_lengths.view(batch_size * max_box)
+        non_zero_indices = target_lengths != 0
+        pooled = pooled[non_zero_indices, :, :, :]
+        mask = mask[non_zero_indices, :]
+        target_lengths = target_lengths[non_zero_indices]
+        recognitions = self.recognition(pooled)
         recognition_loss = self.recognition_loss(recognitions, mask, targets, target_lengths)
         return detection, recognition_loss
