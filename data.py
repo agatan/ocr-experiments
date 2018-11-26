@@ -139,9 +139,12 @@ class Dataset(data.Dataset):
         padded_texts = torch.zeros((batch_size, max_box, max_text_length), dtype=torch.long)
         padded_texts[...] = self.chardict.pad_value
         padded_target_lengths = torch.zeros((batch_size, max_box), dtype=torch.long)
+        padded_ground_truths = torch.zeros((batch_size, max_box,) + self.feature_map_size + (5,))
         for i, bs in enumerate(boxes):
             padded_boxes[i, :len(bs), :] = bs
         for i, ts in enumerate(texts):
             padded_texts[i, :len(ts), :ts.size()[-1]] = ts
             padded_target_lengths[i, :len(ts)] = target_lengths[i]
-        return images, padded_boxes, ground_truths, padded_texts, padded_target_lengths
+        for i, gt in enumerate(ground_truths):
+            padded_ground_truths[i, :gt.size(0), :, :, :] = gt
+        return images, padded_boxes, padded_ground_truths, padded_texts, padded_target_lengths
