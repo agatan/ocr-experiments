@@ -1,7 +1,5 @@
 import torch
 
-
-@torch.jit.script
 def bilinear_interpolate_torch(im, x, y):
     x0 = torch.floor(x).long()
     x1 = x0 + 1
@@ -27,7 +25,6 @@ def bilinear_interpolate_torch(im, x, y):
     return im_a * wa + im_b * wb + im_c * wc + im_d * wd
 
 
-@torch.jit.script
 def roirotate(image, boxes, height, vertical=False):
     # type: (Tensor, Tensor, int, bool) -> Tuple[Tensor, Tensor]
     '''
@@ -85,7 +82,7 @@ def roirotate(image, boxes, height, vertical=False):
                 yy = torch.arange(
                     0, height, dtype=torch.float32) * each_h + box[1]
                 yy = yy.view(-1, 1).repeat(1, width).view(height, width)
-                result_box = bilinear_interpolate_torch(img, xx, yy)
+                result_box = bilinear_interpolate_torch(img, xx.to(img.device), yy.to(img.device))
                 w = result_box.size(2)
                 result[i, j, :, :, :w] = result_box
                 mask[i, j, :w] = 1
@@ -96,7 +93,7 @@ def roirotate(image, boxes, height, vertical=False):
         result.squeeze_(0)
         mask.squeeze_(0)
 
-    return result, mask
+    return result.to(image.device), mask.to(image.device)
 
 
 def main():
