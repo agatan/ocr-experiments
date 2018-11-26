@@ -58,13 +58,25 @@ class TrainingModel(nn.Module):
         feature_map = self.backbone(images)
         print(feature_map.size())
         detection = self.detection(feature_map)
-        pooled = self.roirotate(feature_map, boxes)
-        recognition = self.recognition(pooled)
-        return detection, recognition
+        pooled, mask = self.roirotate(feature_map, boxes)
+        recognitions = []
+        for p in pooled:
+            recognitions.append(self.recognition(p))
+        recognition = torch.stack(recognitions, dim=0)
+        return detection, recognition, mask
 
 
 import torch
 images = torch.zeros((1, 3, 224, 256))
 boxes = torch.zeros((1, 3, 4))
+boxes = torch.Tensor([[
+    [0, 0, 10, 10],
+    [0, 0, 100, 200],
+]])
+print(boxes.size())
 model = TrainingModel(ResNet50Backbone(), Detection(), Recognition(10))
-print(model(images, boxes).size())
+detection, recognition, mask = model(images, boxes)
+print(detection.size())
+print(recognition.size())
+print(mask.size())
+print(mask)
