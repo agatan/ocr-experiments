@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch.nn.functional as F
 
 from backbone import ResNet50Backbone
 from roirotate import roirotate
@@ -43,7 +44,18 @@ class Recognition(nn.Module):
         )
 
     def forward(self, x):
-        return self.layers(x)
+        x = self.layers(x)
+        x = x.squeeze(2)  # squeeze compressed height dimension.
+        x = torch.transpose(x, 1, 2)
+        return x
+
+
+class RecognitionLoss(nn.Module):
+    def forward(self, recognitions, masks, targets, target_lengths):
+        log_probs = F.log_softmax(recognitions, dim=2)  # batch_size * max_box, length, vocab
+        log_probs = torch.transpose(log_probs, 0, 1)  # length, batch_size * max_box, vocab
+        input_lengths = masks.sum(dim=1)
+        return F.ctc_loss(log_probs, targets, input_lengths, target_lengths)
 
 
 class TrainingModel(nn.Module):
@@ -52,31 +64,34 @@ class TrainingModel(nn.Module):
         self.backbone = backbone
         self.detection = detection
         self.recognition = recognition
+        self.recognition_loss = RecognitionLoss()
         self.height = 8
 
-    def forward(self, images, boxes):
+    def forward(self, images, boxes, targets, target_lengths):
         feature_map = self.backbone(images)
         detection = self.detection(feature_map)
         pooled, mask = roirotate(feature_map, boxes, height=self.height)
-        recognitions = []
-        for p in pooled:
-            recognitions.append(self.recognition(p))
-        recognition = torch.stack(recognitions, dim=0)
-        return detection, recognition, mask
+        batch_size, max_box, channel, height, width = pooled.size()
+        pooled = pooled.view(batch_size * max_box, channel, height, width)
+        mask = mask.view(batch_size * max_box, width)
+        recognitions = self.recognition(pooled)
+        recognition_loss = self.recognition_loss(recognitions, mask, targets, target_lengths)
+        return detection, recognition_loss
 
 
 import torch
 
-images = torch.zeros((1, 3, 224, 256))
-boxes = torch.zeros((1, 3, 4))
+images = torch.randn((1, 3, 224, 256)).requires_grad_(True)
 boxes = torch.Tensor([[
     [0, 0, 10, 10],
     [0, 0, 100, 200],
 ]])
+targets = torch.randint(1, 10, (2, 4), dtype=torch.long)
+target_lengths = torch.randint(1, 4, (2,), dtype=torch.long)
+
 print(boxes.size())
 model = TrainingModel(ResNet50Backbone(), Detection(), Recognition(10))
-detection, recognition, mask = model(images, boxes)
-print(detection.size())
-print(recognition.size())
-print(mask.size())
-print(mask)
+detection, recognition_loss = model(images, boxes, targets, target_lengths)
+print(recognition_loss)
+recognition_loss.backward()
+print(images.grad)
