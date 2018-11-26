@@ -20,7 +20,7 @@ FEATURE_SIZE = INPUT_SIZE // 4
 
 chardict = CharDictionary("0123456789")
 dataset = Dataset("./data/train", chardict=chardict, image_size=INPUT_SIZE, feature_map_scale=4, transform=transforms.ToTensor())
-loader = data.DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=dataset.collate_fn)
+loader = data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
 
 training_model = TrainingModel(backbone=ResNet50Backbone(), recognition=Recognition(vocab=10), detection=Detection())
 
@@ -30,7 +30,9 @@ print(device)
 training_model.to(device)
 optimizer = torch.optim.Adam(training_model.parameters())
 
+nan_found = False
 for epoch in range(10):
+    training_model.train()
     for images, boxes, ground_truth, texts, target_lengths in loader:
         training_model.zero_grad()
         images = images.to(device)
@@ -41,11 +43,14 @@ for epoch in range(10):
         _, recognition_loss = training_model(images, boxes, texts, target_lengths)
         print(recognition_loss.detach().item())
         recognition_loss.backward()
-        optimizer.step()
         for name, p in training_model.named_parameters():
-            if torch.any(p.data != p.data):
-                nan_count = torch.sum(p.data != p.data).item()
-                count = torch.sum(torch.ones_like(p.data, dtype=torch.long)).item()
+            if p.grad is not None and torch.any(p.grad != p.grad):
+                nan_count = torch.sum(p.grad != p.grad).item()
+                count = torch.sum(torch.ones_like(p.grad, dtype=torch.long)).item()
                 print(name, nan_count / float(count))
+                nan_found = True
+        optimizer.step()
+        if nan_found:
+            break
+    if nan_found:
         break
-    break
