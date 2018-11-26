@@ -1,7 +1,7 @@
 import torch.nn as nn
 
 from backbone import ResNet50Backbone
-from roirotate import RoIRotate
+from roirotate import roirotate
 
 
 class Detection(nn.Module):
@@ -52,13 +52,12 @@ class TrainingModel(nn.Module):
         self.backbone = backbone
         self.detection = detection
         self.recognition = recognition
-        self.roirotate = RoIRotate(height=8)
+        self.height = 8
 
     def forward(self, images, boxes):
         feature_map = self.backbone(images)
-        print(feature_map.size())
         detection = self.detection(feature_map)
-        pooled, mask = self.roirotate(feature_map, boxes)
+        pooled, mask = roirotate(feature_map, boxes, height=self.height)
         recognitions = []
         for p in pooled:
             recognitions.append(self.recognition(p))
@@ -67,6 +66,7 @@ class TrainingModel(nn.Module):
 
 
 import torch
+
 images = torch.zeros((1, 3, 224, 256))
 boxes = torch.zeros((1, 3, 4))
 boxes = torch.Tensor([[
