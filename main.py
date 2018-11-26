@@ -42,3 +42,10 @@ for epoch in range(10):
         print(recognition_loss.detach().item())
         recognition_loss.backward()
         optimizer.step()
+        for name, p in training_model.named_parameters():
+            if torch.any(p.data != p.data):
+                nan_count = torch.sum(p.data != p.data).item()
+                count = torch.sum(torch.ones_like(p.data, dtype=torch.long)).item()
+                print(name, nan_count / float(count))
+        break
+    break
