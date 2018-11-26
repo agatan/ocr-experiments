@@ -105,7 +105,7 @@ def main():
         os.makedirs(args.o)
     fonts = _font_names('en')
     for i in tqdm(range(0, args.n), total=args.n):
-        image, boxes = make_image(fonts, 304, 192, (255, 255, 255))
+        image, boxes = make_image(fonts, 288, 192, (255, 255, 255))
         with open(os.path.join(args.o, f"{i}.json"), "w") as f:
             json.dump(dict(file=f"{i}.png", boxes=boxes), f)
         with open(os.path.join(args.o, f"{i}.png"), "wb") as f:
