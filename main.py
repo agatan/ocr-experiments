@@ -19,15 +19,26 @@ FEATURE_SIZE = INPUT_SIZE // 4
 
 
 chardict = CharDictionary("0123456789")
-dataset = Dataset("./out", chardict=chardict, image_size=INPUT_SIZE, feature_map_scale=4, transform=transforms.ToTensor())
-loader = data.DataLoader(dataset, batch_size=4, shuffle=True, collate_fn=dataset.collate_fn)
+dataset = Dataset("./data/train", chardict=chardict, image_size=INPUT_SIZE, feature_map_scale=4, transform=transforms.ToTensor())
+loader = data.DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=dataset.collate_fn)
 
 training_model = TrainingModel(backbone=ResNet50Backbone(), recognition=Recognition(vocab=10), detection=Detection())
 
-for images, boxes, ground_truth, texts, target_lengths in loader:
-    _, recognition_loss = training_model(images, boxes, texts, target_lengths)
-    print(recognition_loss)
-    recognition_loss.backward()
-    print(texts)
-    print(target_lengths)
-    break
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
+
+training_model.to(device)
+optimizer = torch.optim.Adam(training_model.parameters())
+
+for epoch in range(10):
+    for images, boxes, ground_truth, texts, target_lengths in loader:
+        training_model.zero_grad()
+        images = images.to(device)
+        boxes = boxes.to(device)
+        ground_truth = ground_truth.to(device)
+        texts = texts.to(device)
+        target_lengths = target_lengths.to(device)
+        _, recognition_loss = training_model(images, boxes, texts, target_lengths)
+        print(recognition_loss.detach().item())
+        recognition_loss.backward()
+        optimizer.step()
