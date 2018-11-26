@@ -125,11 +125,11 @@ class Dataset(data.Dataset):
             boxes[i, 1] = box['top']
             boxes[i, 2] = box['left'] + box['width']
             boxes[i, 3] = box['top'] + box['height']
-        return image, self._compute_ground_truth_box(boxes), padded_texts
+        return image, boxes, self._compute_ground_truth_box(boxes), padded_texts
 
     def collate_fn(self, data):
         batch_size = len(data)
-        images, boxes, texts = zip(*data)
+        images, boxes, ground_truths, texts = zip(*data)
         images = torch.stack(images, dim=0)
         max_box = max((len(bs) for bs in boxes))
         padded_boxes = torch.zeros((batch_size, max_box, 4), dtype=torch.int32)
@@ -140,10 +140,4 @@ class Dataset(data.Dataset):
             padded_boxes[i, :len(bs), :] = bs
         for i, ts in enumerate(texts):
             padded_texts[i, :len(ts), :ts.size()[-1]] = ts
-        return images, padded_boxes, padded_texts
-
-
-chardict = CharDictionary("0123456789")
-dataset = Dataset("./out", chardict=chardict, image_size=(192, 304),
-                  feature_map_scale=4, transform=transforms.ToTensor())
-dataset[0]
+        return images, padded_boxes, ground_truths, padded_texts
