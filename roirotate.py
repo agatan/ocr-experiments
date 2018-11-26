@@ -54,6 +54,9 @@ class RoIRotate(nn.Module):
                 box = bbs[j]
                 base_width = base_widths[i, j]
                 base_height = base_heights[i, j]
+                if base_width == 0 and base_height == 0:
+                    result_bbs.append(torch.zeros((img.size()[0], self.height, 0), dtype=torch.float32))
+                    continue
                 width = new_widths[i, j]
                 each_w = base_width / (width - 1)
                 each_h = base_height / (self.height - 1)
@@ -126,11 +129,12 @@ def main():
     torchvision.utils.save_image(boxes.data, 'a.jpg')
 
     img = Image.open("./out/1.png")
-    img = transforms.ToTensor()(img).requires_grad_(True)
+    img = transforms.ToTensor()(img)
     r = RoIRotate(100)
     img = img.unsqueeze(0).requires_grad_(True)
-    bbs = torch.Tensor([[[0, 0, 100, 200], [100, 0, 300, 200]]]).requires_grad_(True)
+    bbs = torch.Tensor([[[0, 0, 100, 200], [100, 0, 300, 200], [0, 0, 0, 0]]]).requires_grad_(True)
     boxes, masks = r.forward(img, bbs)
+    print(boxes.size())
     boxes.mean().backward()
     print(bbs.grad, img.grad)
     torchvision.utils.save_image(boxes.data[0], 'b.jpg')
