@@ -162,7 +162,7 @@ def main():
                 mean_loss = np.mean(losses)
                 losses = []
 
-                if best_loss is None or (step % 500 == 0 and best_loss > mean_loss):
+                if best_loss is None or best_loss > mean_loss:
                     best_loss = mean_loss
                     save_checkpoint({
                         'step': step,
@@ -173,7 +173,7 @@ def main():
                         'recognition': recognition.state_dict(),
                         'optimizer': optimizer.state_dict(),
                         'scheduler': scheduler.state_dict(),
-                    }, os.path.join(args.checkpoint, "epoch-{}-step-{}.pth.tar".format(epoch, step)), is_best=False)
+                    }, os.path.join(args.checkpoint, "best.pth.tar"))
         if nan_found:
             break
     writer.close()
