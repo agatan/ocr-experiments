@@ -71,7 +71,7 @@ class Dataset(data.Dataset):
         self.samples = samples
 
     def _compute_ground_truth_box(self, boxes):
-        ground_truth = torch.zeros(self.feature_map_size + (5,))
+        ground_truth = torch.zeros((5,) + self.feature_map_size)
         boxes = boxes.float()
         xmin = boxes[:, 0] / self.feature_map_scale
         zeros = torch.zeros_like(xmin)
@@ -89,16 +89,16 @@ class Dataset(data.Dataset):
         ymax_ceil = torch.min(ymax.ceil(), ymax_limits).long()
         ymax_floor = torch.min(ymax.floor(), ymax_limits).long()
         for i in range(boxes.size(0)):
-            ground_truth[ymin_floor[i]:ymin_ceil[i],
-                         xmin_floor[i]:xmin_ceil[i], 0] = -1
-            ground_truth[ymax_floor[i]:ymax_ceil[i],
-                         xmax_floor[i]:xmax_ceil[i], 0] = -1
-            ground_truth[ymin_ceil[i]:ymax_floor[i],
-                         xmin_ceil[i]:xmax_floor[i], 0] = 1
-            ground_truth[ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i], 1] = torch.arange(xmin_ceil[i], xmax_floor[i]) - xmin[i]
-            ground_truth[ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i], 2] = torch.arange(ymin_ceil[i], ymax_floor[i]).unsqueeze(1) - ymin[i]
-            ground_truth[ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i], 3] = xmax[i] - torch.arange(xmin_ceil[i], xmax_floor[i])
-            ground_truth[ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i], 4] = ymax[i] - torch.arange(ymin_ceil[i], ymax_floor[i]).unsqueeze(1)
+            ground_truth[0, ymin_floor[i]:ymin_ceil[i],
+                         xmin_floor[i]:xmin_ceil[i]] = -1
+            ground_truth[0, ymax_floor[i]:ymax_ceil[i],
+                         xmax_floor[i]:xmax_ceil[i]] = -1
+            ground_truth[0, ymin_ceil[i]:ymax_floor[i],
+                         xmin_ceil[i]:xmax_floor[i]] = 1
+            ground_truth[1, ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i]] = torch.arange(xmin_ceil[i], xmax_floor[i]) - xmin[i]
+            ground_truth[2, ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i]] = torch.arange(ymin_ceil[i], ymax_floor[i]).unsqueeze(1) - ymin[i]
+            ground_truth[3, ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i]] = xmax[i] - torch.arange(xmin_ceil[i], xmax_floor[i])
+            ground_truth[4, ymin_ceil[i]:ymax_floor[i], xmin_ceil[i]:xmax_floor[i]] = ymax[i] - torch.arange(ymin_ceil[i], ymax_floor[i]).unsqueeze(1)
         return ground_truth
 
     def __len__(self):
@@ -140,12 +140,12 @@ class Dataset(data.Dataset):
         padded_texts = torch.zeros((batch_size, max_box, max_text_length), dtype=torch.long)
         padded_texts[...] = self.chardict.pad_value
         padded_target_lengths = torch.zeros((batch_size, max_box), dtype=torch.long)
-        padded_ground_truths = torch.zeros((batch_size, max_box,) + self.feature_map_size + (5,))
+        padded_ground_truths = torch.zeros((batch_size, 5) + self.feature_map_size)
         for i, bs in enumerate(boxes):
             padded_boxes[i, :len(bs), :] = bs
         for i, ts in enumerate(texts):
             padded_texts[i, :len(ts), :ts.size()[-1]] = ts
             padded_target_lengths[i, :len(ts)] = target_lengths[i]
         for i, gt in enumerate(ground_truths):
-            padded_ground_truths[i, :gt.size(0), :, :, :] = gt
+            padded_ground_truths[i, :, :, :] = gt
         return images, padded_boxes, padded_ground_truths, padded_texts, padded_target_lengths
