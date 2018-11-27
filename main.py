@@ -93,7 +93,7 @@ def main():
             return 1e-3
         elif epoch < 5:
             return 5e-4
-        return 1e-3
+        return 1e-4
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_sched)
 
     start_epoch = 0
@@ -159,8 +159,9 @@ def main():
                 confidence_accuracies = []
                 regression_losses = []
                 recognition_losses = []
+                losses = []
 
-                if best_loss is None or best_loss > np.mean(losses):
+                if best_loss is None or (step % 500 == 0 and best_loss > np.mean(losses)):
                     best_loss = np.mean(losses)
                     save_checkpoint({
                         'step': step,
