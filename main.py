@@ -1,12 +1,14 @@
 import os
 import json
 import math
+import random
 from typing import List
 
 import numpy as np
 from PIL import Image
 import torch
 import torch.utils.data as data
+import torchvision.utils
 import torchvision.transforms as transforms
 
 import datagen
@@ -18,11 +20,17 @@ INPUT_SIZE = np.array([192, 288])
 FEATURE_SIZE = INPUT_SIZE // 4
 
 
+torch.manual_seed(42)
+random.seed(42)
+np.random.seed(42)
+
+
+
 chardict = CharDictionary("0123456789")
 dataset = Dataset("./data/train", chardict=chardict, image_size=INPUT_SIZE, feature_map_scale=4, transform=transforms.ToTensor())
 loader = data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
 
-training_model = TrainingModel(backbone=ResNet50Backbone(), recognition=Recognition(vocab=10), detection=Detection())
+training_model = TrainingModel(backbone=ResNet50Backbone(), recognition=Recognition(vocab=chardict.vocab), detection=Detection())
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
