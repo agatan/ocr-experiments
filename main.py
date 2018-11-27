@@ -12,6 +12,7 @@ import torch
 import torch.utils.data as data
 import torchvision.utils
 import torchvision.transforms as transforms
+from tensorboardX import SummaryWriter
 
 import datagen
 from data import CharDictionary, Dataset
@@ -49,12 +50,16 @@ def main():
     parser.add_argument("--checkpoint", default="checkpoint")
     parser.add_argument("--confidence_loss_function", default="bce", choices=["bce", "focalloss"])
     parser.add_argument("--restore")
+    parser.add_argument("--logdir", default="logs")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARN,
         format="%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s",
     )
+
+    logger.info("logdir is {}".format(args.logdir))
+    writer = SummaryWriter(log_dir=args.logdir)
 
     logger.info("random seed is {}".format(args.seed))
     torch.manual_seed(args.seed)
@@ -76,24 +81,33 @@ def main():
     logger.info("device: {}".format(device))
 
     logger.info("Instantiate training model")
-    backbone = ResNet50Backbone()
+    backbone = ResNet50Backbone(pretrained=True)
     recognition = Recognition(vocab=chardict.vocab)
     detection = Detection()
     training_model = TrainingModel(backbone=backbone, recognition=recognition, detection=detection, confidence_loss_function=args.confidence_loss_function)
     training_model.to(device)
     optimizer = torch.optim.Adam(training_model.parameters())
 
+    def lr_sched(epoch):
+        if epoch < 2:
+            return 1e-3
+        elif epoch < 5:
+            return 5e-4
+        return 1e-4
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_sched)
+
     start_epoch = 0
     step = 0
     if args.restore:
         logger.info("Restore from {}".format(args.restore))
         state = torch.load(args.restore)
-        start_epoch = state['epoch']
+        start_epoch = state['epoch'] + 1
         step = state['step']
         backbone.load_state_dict(state['backbone'])
         recognition.load_state_dict(state['recognition'])
         detection.load_state_dict(state['detection'])
         optimizer.load_state_dict(state['optimizer'])
+        scheduler.load_state_dict(state['scheduler'])
         logger.info("Loaded checkpoint {} (resume from epoch {}, step {})".format(args.restore, start_epoch, step))
 
     os.makedirs(args.checkpoint, exist_ok=True)
@@ -105,6 +119,7 @@ def main():
 
     for epoch in range(start_epoch, args.epochs):
         logger.info("[Epoch {}]".format(epoch))
+        scheduler.step()
         training_model.train()
         for images, boxes, ground_truth, texts, target_lengths in loader:
             step += 1
@@ -131,7 +146,13 @@ def main():
             if nan_found:
                 torchvision.utils.save_image(images, "out.png")
                 break
-            if step % 10 == 0:
+            if step % 50 == 0:
+                writer.add_scalar("learning_rate", lr_sched(epoch), step)
+                writer.add_scalar("loss/confidence", np.mean(confidence_losses), step)
+                writer.add_scalar("loss/regression", np.mean(regression_losses), step)
+                writer.add_scalar("loss/recognition", np.mean(recognition_losses), step)
+                writer.add_scalar("loss", np.mean(confidence_losses) + np.mean(regression_losses) + np.mean(recognition_losses), step)
+                writer.add_scalar("accuracy/confidence", np.mean(confidence_accuracies), step)
                 logger.info("[Epoch {} Step {} / {}]".format(epoch, step, len(dataset) // args.batch_size))
                 logger.info("Confidence Loss: {}, Regression Loss: {}, Recognition Loss: {}".format(
                     np.mean(confidence_losses),
@@ -152,9 +173,11 @@ def main():
             'detection': detection.state_dict(),
             'recognition': recognition.state_dict(),
             'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict(),
         }, os.path.join(args.checkpoint, "epoch-{}-step-{}.pth.tar".format(epoch, step)), is_best=False)
         if nan_found:
             break
+    writer.close()
 
 
 if __name__ == "__main__":
