@@ -93,16 +93,18 @@ def main():
             return 1e-3
         elif epoch < 5:
             return 5e-4
-        return 1e-4
+        return 1e-3
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_sched)
 
     start_epoch = 0
     step = 0
+    best_loss = None
     if args.restore:
         logger.info("Restore from {}".format(args.restore))
         state = torch.load(args.restore)
         start_epoch = state['epoch'] + 1
         step = state['step']
+        best_loss = state['best_loss']
         backbone.load_state_dict(state['backbone'])
         recognition.load_state_dict(state['recognition'])
         detection.load_state_dict(state['detection'])
@@ -111,11 +113,11 @@ def main():
         logger.info("Loaded checkpoint {} (resume from epoch {}, step {})".format(args.restore, start_epoch, step))
 
     os.makedirs(args.checkpoint, exist_ok=True)
-    nan_found = False
     confidence_losses = []
     confidence_accuracies = []
     regression_losses = []
     recognition_losses = []
+    losses = []
 
     for epoch in range(start_epoch, args.epochs):
         logger.info("[Epoch {}]".format(epoch))
@@ -135,23 +137,16 @@ def main():
             regression_losses.append(regression_loss.detach().item())
             recognition_losses.append(recognition_loss.detach().item())
             loss = confidence_loss + regression_loss + recognition_loss
+            losses.append(loss.detach().item())
             loss.backward()
-            for name, p in training_model.named_parameters():
-                if p.grad is not None and torch.any(p.grad != p.grad):
-                    nan_count = torch.sum(p.grad != p.grad).item()
-                    count = torch.sum(torch.ones_like(p.grad, dtype=torch.long)).item()
-                    print(name, nan_count / float(count))
-                    nan_found = True
             optimizer.step()
-            if nan_found:
-                torchvision.utils.save_image(images, "out.png")
-                break
+
             if step % 50 == 0:
                 writer.add_scalar("learning_rate", lr_sched(epoch), step)
+                writer.add_scalar("loss", np.mean(losses), step)
                 writer.add_scalar("loss/confidence", np.mean(confidence_losses), step)
                 writer.add_scalar("loss/regression", np.mean(regression_losses), step)
                 writer.add_scalar("loss/recognition", np.mean(recognition_losses), step)
-                writer.add_scalar("loss", np.mean(confidence_losses) + np.mean(regression_losses) + np.mean(recognition_losses), step)
                 writer.add_scalar("accuracy/confidence", np.mean(confidence_accuracies), step)
                 logger.info("[Epoch {} Step {} / {}]".format(epoch, step, len(dataset) // args.batch_size))
                 logger.info("Confidence Loss: {}, Regression Loss: {}, Recognition Loss: {}".format(
@@ -165,16 +160,18 @@ def main():
                 regression_losses = []
                 recognition_losses = []
 
-
-        save_checkpoint({
-            'step': step,
-            'epoch': epoch,
-            'backbone': backbone.state_dict(),
-            'detection': detection.state_dict(),
-            'recognition': recognition.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'scheduler': scheduler.state_dict(),
-        }, os.path.join(args.checkpoint, "epoch-{}-step-{}.pth.tar".format(epoch, step)), is_best=False)
+                if best_loss is None or best_loss > np.mean(losses):
+                    best_loss = np.mean(losses)
+                    save_checkpoint({
+                        'step': step,
+                        'epoch': epoch,
+                        'best_loss': best_loss,
+                        'backbone': backbone.state_dict(),
+                        'detection': detection.state_dict(),
+                        'recognition': recognition.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'scheduler': scheduler.state_dict(),
+                    }, os.path.join(args.checkpoint, "epoch-{}-step-{}.pth.tar".format(epoch, step)), is_best=False)
         if nan_found:
             break
     writer.close()
