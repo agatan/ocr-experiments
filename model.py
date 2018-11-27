@@ -80,6 +80,7 @@ class TrainingModel(nn.Module):
         non_zero_indices = target_lengths != 0
         pooled = pooled[non_zero_indices, :, :, :]
         mask = mask[non_zero_indices, :]
+        targets = targets[non_zero_indices]
         target_lengths = target_lengths[non_zero_indices]
         recognitions = self.recognition(pooled)
         recognition_loss = self.recognition_loss(recognitions, mask, targets, target_lengths)
