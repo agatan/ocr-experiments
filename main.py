@@ -42,6 +42,7 @@ def main():
     parser.add_argument("--train", required=True, type=str)
     parser.add_argument("--test", type=str, default=None)
     parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--charset", choices=["digits"], default="digits")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--verbose", default=False, action='store_true')
@@ -59,6 +60,7 @@ def main():
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
+    torch.set_num_threads(8)
 
     logger.info("charset is {}".format(args.charset))
     if args.charset == "digits":
@@ -68,7 +70,7 @@ def main():
 
     logger.info("Loading training dataset from {}".format(args.train))
     dataset = Dataset(args.train, chardict=chardict, image_size=INPUT_SIZE, feature_map_scale=4, transform=transforms.ToTensor())
-    loader = data.DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=dataset.collate_fn)
+    loader = data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=dataset.collate_fn, num_workers=8)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info("device: {}".format(device))
@@ -96,6 +98,11 @@ def main():
 
     os.makedirs(args.checkpoint, exist_ok=True)
     nan_found = False
+    confidence_losses = []
+    confidence_accuracies = []
+    regression_losses = []
+    recognition_losses = []
+
     for epoch in range(start_epoch, args.epochs):
         logger.info("[Epoch {}]".format(epoch))
         training_model.train()
@@ -108,12 +115,10 @@ def main():
             texts = texts.to(device)
             target_lengths = target_lengths.to(device)
             confidence_loss, regression_loss, confidences_accuracy, recognition_loss = training_model(images, boxes, ground_truth, texts, target_lengths)
-            logger.info("Confidence Loss: {}, Regression Loss: {}, Recognition Loss: {}".format(
-                confidence_loss.detach().item(),
-                regression_loss.detach().item(),
-                recognition_loss.detach().item(),
-            ))
-            logger.info("Confidence Accracuy: {:.4f}%".format(confidences_accuracy.item()))
+            confidence_losses.append(confidence_loss.detach().item())
+            confidence_accuracies.append(confidences_accuracy.detach().item())
+            regression_losses.append(regression_loss.detach().item())
+            recognition_losses.append(recognition_loss.detach().item())
             loss = confidence_loss + regression_loss + recognition_loss
             loss.backward()
             for name, p in training_model.named_parameters():
@@ -126,6 +131,20 @@ def main():
             if nan_found:
                 torchvision.utils.save_image(images, "out.png")
                 break
+            if step % 10 == 0:
+                logger.info("[Epoch {} Step {} / {}]".format(epoch, step, len(dataset) // args.batch_size))
+                logger.info("Confidence Loss: {}, Regression Loss: {}, Recognition Loss: {}".format(
+                    np.mean(confidence_losses),
+                    np.mean(regression_losses),
+                    np.mean(recognition_losses),
+                ))
+                logger.info("Confidence Accracuy: {:.4f}%".format(np.mean(confidence_accuracies)))
+                confidence_losses = []
+                confidence_accuracies = []
+                regression_losses = []
+                recognition_losses = []
+
+
         save_checkpoint({
             'step': step,
             'epoch': epoch,
