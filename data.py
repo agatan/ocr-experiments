@@ -115,7 +115,7 @@ class Dataset(data.Dataset):
             annot = json.load(f)
             boxes = annot['boxes']
             random.shuffle(boxes)
-            annot['boxes'] = boxes[:1]
+            annot['boxes'] = boxes
         length_of_longest_text = max(
             (len(box['text']) for box in annot['boxes']))
         padded_texts = torch.zeros(
@@ -158,7 +158,7 @@ class Dataset(data.Dataset):
 def reconstruct_boxes(boxes_pred: torch.Tensor):
     """
     Args:
-        boxes_pred: [4 (L, T, R, B), #boxes]
+        boxes_pred: [4 (L, T, R, B), H, W]
     """
     recons = torch.zeros_like(boxes_pred)
     _, h, w = boxes_pred.size()
@@ -169,3 +169,15 @@ def reconstruct_boxes(boxes_pred: torch.Tensor):
     recons[2, :, :] = xx + boxes_pred[2, :, :]
     recons[3, :, :] = yy + boxes_pred[3, :, :]
     return recons
+
+
+def _test():
+    c = CharDictionary("0123456789")
+    dataset = Dataset("./data/test", c, image_size=(192, 288), feature_map_scale=4)
+    image, _, gt, _, _ = dataset[0]
+    boxes = reconstruct_boxes(gt[1:]).view(4, -1).transpose(0, 1) * 4
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(image)
+    for xmin, ymin, xmax, ymax in boxes:
+        draw.rectangle(((xmin, ymin), (xmax, ymax)), outline=(255, 0, 0), width=2)
+        image.show()
