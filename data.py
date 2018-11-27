@@ -1,10 +1,11 @@
-import torchvision.transforms as transforms
+import random
 import os
 import json
 from typing import List
 
 import torch
 import torch.utils.data as data
+import torchvision.transforms as transforms
 from PIL import Image
 
 
@@ -112,6 +113,9 @@ class Dataset(data.Dataset):
             image = self.transform(image)
         with open(annotfile, "r") as f:
             annot = json.load(f)
+            boxes = annot['boxes']
+            random.shuffle(boxes)
+            annot['boxes'] = boxes[:1]
         length_of_longest_text = max(
             (len(box['text']) for box in annot['boxes']))
         padded_texts = torch.zeros(
