@@ -168,8 +168,7 @@ def main():
                         'optimizer': optimizer.state_dict(),
                         'scheduler': scheduler.state_dict(),
                     }, os.path.join(args.checkpoint, "best.pth.tar"))
-        if nan_found:
-            break
+
     writer.close()
 
 
