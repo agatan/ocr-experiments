@@ -41,7 +41,7 @@ class DetectionLoss(nn.Module):
             self.confidence_loss = _BinaryFocalLoss(gamma=2)
         else:
             self.confidence_loss = nn.BCELoss()
-        self.regression_loss = nn.SmoothL1Loss()
+        self.regression_loss = nn.SmoothL1Loss(reduction='none')
 
     def forward(self, detections, ground_truths):
         """Calculate detector's loss.
@@ -54,6 +54,7 @@ class DetectionLoss(nn.Module):
         """
         confidences_pred_logits = detections[:, 0, :, :].contiguous().view(-1)
         confidences_gt = ground_truths[:, 0, :, :].contiguous().view(-1)
+        box_indices = confidences_gt == 1
         care_indices = confidences_gt != -1
         confidences_pred = torch.sigmoid(confidences_pred_logits[care_indices])
         confidences_gt = confidences_gt[care_indices]
@@ -61,6 +62,8 @@ class DetectionLoss(nn.Module):
         confidences_loss = self.confidence_loss(confidences_pred, confidences_gt)
 
         regression_loss = self.regression_loss(detections[:, 1:, :, :], ground_truths[:, 1:, :, :])
+        regression_loss = torch.sum(regression_loss, dim=1).view(-1)
+        regression_loss = regression_loss[box_indices].mean()
         return confidences_loss, regression_loss, confidences_accuracy
 
 
