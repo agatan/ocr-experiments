@@ -46,6 +46,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--verbose", default=False, action='store_true')
     parser.add_argument("--checkpoint", default="checkpoint")
+    parser.add_argument("--confidence_loss_function", default="bce", choices=["bce", "focalloss"])
     parser.add_argument("--restore")
     args = parser.parse_args()
 
@@ -76,7 +77,7 @@ def main():
     backbone = ResNet50Backbone()
     recognition = Recognition(vocab=chardict.vocab)
     detection = Detection()
-    training_model = TrainingModel(backbone=backbone, recognition=recognition, detection=detection)
+    training_model = TrainingModel(backbone=backbone, recognition=recognition, detection=detection, confidence_loss_function=args.confidence_loss_function)
     training_model.to(device)
     optimizer = torch.optim.Adam(training_model.parameters())
 
@@ -106,9 +107,14 @@ def main():
             ground_truth = ground_truth.to(device)
             texts = texts.to(device)
             target_lengths = target_lengths.to(device)
-            _, recognition_loss = training_model(images, boxes, texts, target_lengths)
-            logger.info(recognition_loss.detach().item())
-            recognition_loss.backward()
+            detection_loss, confidences_accuracy, recognition_loss = training_model(images, boxes, ground_truth, texts, target_lengths)
+            logger.info("Detection Loss: {}, Recognition Loss: {}".format(
+                detection_loss.detach().item(),
+                recognition_loss.detach().item(),
+            ))
+            logger.info("Confidence Accracuy: {:.2f}%".format(confidences_accuracy.item()))
+            loss = detection_loss + recognition_loss
+            loss.backward()
             for name, p in training_model.named_parameters():
                 if p.grad is not None and torch.any(p.grad != p.grad):
                     nan_count = torch.sum(p.grad != p.grad).item()

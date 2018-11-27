@@ -15,6 +15,52 @@ class Detection(nn.Module):
         return self.conv(x)
 
 
+class _BinaryFocalLoss(nn.Module):
+    """_BinaryFocalLoss is still buggy...
+    """
+    def __init__(self, gamma, eps=1e-8, mean=True):
+        super(_BinaryFocalLoss, self).__init__()
+        self.gamma = gamma
+        self.eps = eps
+        self.mean = mean
+
+    def forward(self, pred, target):
+        p = (target == 0).float() * (1 - pred) + (target == 1).float() * pred
+        p = p.clamp(self.eps, 1 - self.eps)
+        loss = -(1 - p) ** self.gamma * torch.log(p)
+        if self.mean:
+            return torch.mean(loss)
+        else:
+            return torch.sum(loss)
+
+
+class DetectionLoss(nn.Module):
+    def __init__(self, confidence_loss_function='bce'):
+        super(DetectionLoss, self).__init__()
+        if confidence_loss_function == 'focalloss':
+            self.confidence_loss = _BinaryFocalLoss(gamma=2)
+        else:
+            self.confidence_loss = nn.BCELoss()
+
+    def forward(self, detections, ground_truths):
+        """Calculate detector's loss.
+
+        The arguments are consists of 5 channels (confidence, to left, to top, to right, to bottom).
+
+        Args:
+            detections (torch.Tensor): output of Detection.
+            ground_truths (torch.Tensor): computed ground truth for detection.
+        """
+        confidences_pred_logits = detections[:, 0, :, :].contiguous().view(-1)
+        confidences_gt = ground_truths[:, 0, :, :].contiguous().view(-1)
+        care_indices = confidences_gt != -1
+        confidences_pred = torch.sigmoid(confidences_pred_logits[care_indices])
+        confidences_gt = confidences_gt[care_indices]
+        confidences_accuracy = torch.sum((confidences_pred > 0.5).float() == confidences_gt) / torch.ones_like(confidences_gt).float().sum()
+        confidences_loss = self.confidence_loss(confidences_pred, confidences_gt)
+        return confidences_loss, confidences_accuracy
+
+
 class Recognition(nn.Module):
     def __init__(self, vocab):
         super(Recognition, self).__init__()
@@ -59,17 +105,23 @@ class RecognitionLoss(nn.Module):
 
 
 class TrainingModel(nn.Module):
-    def __init__(self, backbone, detection, recognition):
+    def __init__(self, backbone, detection, recognition, confidence_loss_function):
         super(TrainingModel, self).__init__()
         self.backbone = backbone
         self.detection = detection
+        self.detection_loss = DetectionLoss(confidence_loss_function=confidence_loss_function)
         self.recognition = recognition
         self.recognition_loss = RecognitionLoss()
         self.height = 8
 
-    def forward(self, images, boxes, targets, target_lengths):
+    def forward(self, images, boxes, ground_truths, targets, target_lengths):
         feature_map = self.backbone(images)
+
+        # detection
         detection = self.detection(feature_map)
+        detection_loss, confidences_accuracy = self.detection_loss(detection, ground_truths)
+
+        # recognition
         pooled, mask = roirotate(feature_map, boxes, height=self.height)
         batch_size, max_box, channel, height, width = pooled.size()
         pooled = pooled.view(batch_size * max_box, channel, height, width)
@@ -83,4 +135,4 @@ class TrainingModel(nn.Module):
         target_lengths = target_lengths[non_zero_indices]
         recognitions = self.recognition(pooled)
         recognition_loss = self.recognition_loss(recognitions, mask, targets, target_lengths)
-        return detection, recognition_loss
+        return detection_loss, confidences_accuracy, recognition_loss
