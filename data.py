@@ -16,11 +16,8 @@ class CharDictionary:
             idx = len(self._idx2char)
             self._char2idx[c] = idx
             self._idx2char.append(c)
-        self._char2idx["<BLANK>"] = len(self._idx2char)
-        self._idx2char.append("<BLANK>")
         self.pad_value = 0
         self.unknown_value = 1
-        self.blank_value = self.char2idx("<BLANK>")
 
     def char2idx(self, c):
         return self._char2idx.get(c, self.unknown_value)
@@ -29,6 +26,10 @@ class CharDictionary:
         if i < len(self._idx2char):
             return self._idx2char[i]
         return "<UNK>"
+
+    @property
+    def vocab(self):
+        return len(self._idx2char)
 
 
 def _has_file_allowed_extension(filename: str, extensions: List[str]):
