@@ -114,7 +114,7 @@ def main():
                 recognition_loss.detach().item(),
             ))
             logger.info("Confidence Accracuy: {:.4f}%".format(confidences_accuracy.item()))
-            loss = confidence_loss + regression_loss  # + recognition_loss
+            loss = confidence_loss + regression_loss + recognition_loss
             loss.backward()
             for name, p in training_model.named_parameters():
                 if p.grad is not None and torch.any(p.grad != p.grad):
