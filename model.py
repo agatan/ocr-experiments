@@ -125,6 +125,10 @@ class TrainingModel(nn.Module):
         confidence_loss, regression_loss, confidences_accuracy = self.detection_loss(detection, ground_truths)
 
         # recognition
+        # Use only 1 box for recognizer training.
+        boxes = boxes[:, :1]
+        targets = targets[:, :1]
+        target_lengths = target_lengths[:, :1]
         pooled, mask = roirotate(feature_map, boxes, height=self.height)
         batch_size, max_box, channel, height, width = pooled.size()
         pooled = pooled.view(batch_size * max_box, channel, height, width)
