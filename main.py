@@ -25,15 +25,9 @@ FEATURE_SIZE = INPUT_SIZE // 4
 logger = logging.getLogger(__name__)
 
 
-def save_checkpoint(state, filename, is_best):
+def save_checkpoint(state, filename):
     logger.info("Saving the state to {}".format(filename))
     torch.save(state, filename)
-    if is_best:
-        best_file = os.path.join(os.path.dirname(filename), "best.pth")
-        if filename.endswith(".tar"):
-            best_file += ".tar"
-        logger.info("Copy {} to {}".format(filename, best_file))
-        shutil.copyfile(filename, best_file)
 
 
 def main():
