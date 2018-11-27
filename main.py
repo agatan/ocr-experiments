@@ -13,7 +13,8 @@ import torchvision.transforms as transforms
 
 import datagen
 from data import CharDictionary, Dataset
-from model import TrainingModel, ResNet50Backbone, Recognition, Detection
+from model import TrainingModel, Recognition, Detection
+from backbone import ResNet50Backbone
 
 
 INPUT_SIZE = np.array([192, 288])
@@ -25,10 +26,9 @@ random.seed(42)
 np.random.seed(42)
 
 
-
 chardict = CharDictionary("0123456789")
 dataset = Dataset("./data/train", chardict=chardict, image_size=INPUT_SIZE, feature_map_scale=4, transform=transforms.ToTensor())
-loader = data.DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=dataset.collate_fn)
+loader = data.DataLoader(dataset, batch_size=8, shuffle=True, collate_fn=dataset.collate_fn)
 
 training_model = TrainingModel(backbone=ResNet50Backbone(), recognition=Recognition(vocab=chardict.vocab), detection=Detection())
 
@@ -59,6 +59,7 @@ for epoch in range(10):
                 nan_found = True
         optimizer.step()
         if nan_found:
+            torchvision.utils.save_image(images, "out.png")
             break
     if nan_found:
         break
