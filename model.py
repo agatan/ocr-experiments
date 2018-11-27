@@ -41,6 +41,7 @@ class DetectionLoss(nn.Module):
             self.confidence_loss = _BinaryFocalLoss(gamma=2)
         else:
             self.confidence_loss = nn.BCELoss()
+        self.regression_loss = nn.SmoothL1Loss()
 
     def forward(self, detections, ground_truths):
         """Calculate detector's loss.
@@ -58,7 +59,9 @@ class DetectionLoss(nn.Module):
         confidences_gt = confidences_gt[care_indices]
         confidences_accuracy = torch.sum((confidences_pred > 0.5).float() == confidences_gt) / torch.ones_like(confidences_gt).float().sum()
         confidences_loss = self.confidence_loss(confidences_pred, confidences_gt)
-        return confidences_loss, confidences_accuracy
+
+        regression_loss = self.regression_loss(detections[:, 1:, :, :], ground_truths[:, 1:, :, :])
+        return confidences_loss, regression_loss, confidences_accuracy
 
 
 class Recognition(nn.Module):
@@ -119,7 +122,7 @@ class TrainingModel(nn.Module):
 
         # detection
         detection = self.detection(feature_map)
-        detection_loss, confidences_accuracy = self.detection_loss(detection, ground_truths)
+        confidence_loss, regression_loss, confidences_accuracy = self.detection_loss(detection, ground_truths)
 
         # recognition
         pooled, mask = roirotate(feature_map, boxes, height=self.height)
@@ -135,4 +138,4 @@ class TrainingModel(nn.Module):
         target_lengths = target_lengths[non_zero_indices]
         recognitions = self.recognition(pooled)
         recognition_loss = self.recognition_loss(recognitions, mask, targets, target_lengths)
-        return detection_loss, confidences_accuracy, recognition_loss
+        return confidence_loss, regression_loss, confidences_accuracy, recognition_loss

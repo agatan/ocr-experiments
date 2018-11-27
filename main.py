@@ -107,13 +107,14 @@ def main():
             ground_truth = ground_truth.to(device)
             texts = texts.to(device)
             target_lengths = target_lengths.to(device)
-            detection_loss, confidences_accuracy, recognition_loss = training_model(images, boxes, ground_truth, texts, target_lengths)
-            logger.info("Detection Loss: {}, Recognition Loss: {}".format(
-                detection_loss.detach().item(),
+            confidence_loss, regression_loss, confidences_accuracy, recognition_loss = training_model(images, boxes, ground_truth, texts, target_lengths)
+            logger.info("Confidence Loss: {}, Regression Loss: {}, Recognition Loss: {}".format(
+                confidence_loss.detach().item(),
+                regression_loss.detach().item(),
                 recognition_loss.detach().item(),
             ))
-            logger.info("Confidence Accracuy: {:.2f}%".format(confidences_accuracy.item()))
-            loss = detection_loss + recognition_loss
+            logger.info("Confidence Accracuy: {:.4f}%".format(confidences_accuracy.item()))
+            loss = confidence_loss + regression_loss  # + recognition_loss
             loss.backward()
             for name, p in training_model.named_parameters():
                 if p.grad is not None and torch.any(p.grad != p.grad):

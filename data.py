@@ -149,3 +149,19 @@ class Dataset(data.Dataset):
         for i, gt in enumerate(ground_truths):
             padded_ground_truths[i, :, :, :] = gt
         return images, padded_boxes, padded_ground_truths, padded_texts, padded_target_lengths
+
+
+def reconstruct_boxes(boxes_pred: torch.Tensor):
+    """
+    Args:
+        boxes_pred: [4 (L, T, R, B), #boxes]
+    """
+    recons = torch.zeros_like(boxes_pred)
+    _, h, w = boxes_pred.size()
+    xx = torch.arange(0, w).float()
+    yy = torch.arange(0, h).float().unsqueeze(1).repeat(1, w)
+    recons[0, :, :] = xx - boxes_pred[0, :, :]
+    recons[1, :, :] = yy - boxes_pred[1, :, :]
+    recons[2, :, :] = xx + boxes_pred[2, :, :]
+    recons[3, :, :] = yy + boxes_pred[3, :, :]
+    return recons
