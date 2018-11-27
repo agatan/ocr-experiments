@@ -159,10 +159,11 @@ def main():
                 confidence_accuracies = []
                 regression_losses = []
                 recognition_losses = []
+                mean_loss = np.mean(losses)
                 losses = []
 
-                if best_loss is None or (step % 500 == 0 and best_loss > np.mean(losses)):
-                    best_loss = np.mean(losses)
+                if best_loss is None or (step % 500 == 0 and best_loss > mean_loss):
+                    best_loss = mean_loss
                     save_checkpoint({
                         'step': step,
                         'epoch': epoch,
