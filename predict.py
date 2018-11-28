@@ -98,18 +98,22 @@ with torch.no_grad():
     detections_pred = detection(feature_map)
 
     for detection_pred in detections_pred:
-        recons = reconstruct_boxes(detection_pred[1:, :, :]) * 4
+        recons = reconstruct_boxes(detection_pred[1:, :, :])
         scores = detection_pred[0, :, :].view(-1)
         recons = recons.view(4, -1).transpose(0, 1)
         keep, count = nms(recons, scores, top_k=200)
         scores = torch.sigmoid_(scores[keep[:count]])
         recons = recons[keep[:count]]
+        recons = recons[(recons[:, 2] - recons[:, 0] > 1) & (recons[:, 3] - recons[:, 1] > 1)]
         boxes, masks = roirotate(feature_map[0], recons, height=8)
         recognized = recognition(boxes)
         argmax = torch.argmax(recognized, dim=2)
+        copy = image.copy().convert("RGBA")
         draw = ImageDraw.Draw(image)
-        for i, (xmin, ymin, xmax, ymax) in enumerate(recons):
+
+        for xmin, ymin, xmax, ymax in recons * 4:
             draw.rectangle(((xmin, ymin), (xmax, ymax)), outline=(255, 0, 0), width=2)
+        for i, (xmin, ymin, xmax, ymax) in enumerate(recons * 4):
             last = None
             decoded = []
             for idx in argmax[i]:
@@ -122,4 +126,8 @@ with torch.no_grad():
                 decoded.append(c)
             print(''.join(decoded))
             draw.text((xmin - 5, ymin - 5), text=''.join(decoded), fill=(0, 255, 0))
+        image = image.convert("RGBA")
         image.show()
+        copy.putalpha(128)
+        image.putalpha(128)
+        Image.alpha_composite(image, copy).show()

@@ -95,6 +95,7 @@ class Recognition(nn.Module):
             nn.Conv2d(256, vocab, kernel_size=1),
         )
 
+
     def forward(self, x):
         x = self.layers(x)
         x = x.squeeze(2)  # squeeze compressed height dimension.
@@ -119,6 +120,7 @@ class TrainingModel(nn.Module):
         self.recognition = recognition
         self.recognition_loss = RecognitionLoss()
         self.height = 8
+        self.feature_map_scale = 4
 
     def forward(self, images, boxes, ground_truths, targets, target_lengths):
         feature_map = self.backbone(images)
@@ -128,6 +130,7 @@ class TrainingModel(nn.Module):
         confidence_loss, regression_loss, confidences_accuracy = self.detection_loss(detection, ground_truths)
 
         # recognition
+        boxes = boxes.float() / self.feature_map_scale
         # Use only 1 box for recognizer training.
         boxes = boxes[:, :1]
         targets = targets[:, :1]
