@@ -75,6 +75,7 @@ def main():
         feature_map_scale=4,
         transform=transforms.Compose([
             transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]),
     )
     loader = data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=dataset.collate_fn, num_workers=8)
