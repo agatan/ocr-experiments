@@ -83,7 +83,7 @@ backbone = ResNet50Backbone()
 recognition = Recognition(chardict.vocab)
 detection = Detection()
 
-state = torch.load("./checkpoint/epoch-99-step-100.pth.tar")
+state = torch.load("./checkpoint/best.pth.tar")
 backbone.load_state_dict(state['backbone'])
 recognition.load_state_dict(state['recognition'])
 detection.load_state_dict(state['detection'])
@@ -91,7 +91,7 @@ backbone.eval()
 recognition.eval()
 detection.eval()
 
-image = Image.open("./data/train/1.png")
+image = Image.open("./data/test/1.png")
 image_tensor = transforms.ToTensor()(image).unsqueeze(0)
 with torch.no_grad():
     feature_map = backbone(image_tensor)
@@ -101,7 +101,7 @@ with torch.no_grad():
         recons = reconstruct_boxes(detection_pred[1:, :, :]) * 4
         scores = detection_pred[0, :, :].view(-1)
         recons = recons.view(4, -1).transpose(0, 1)
-        keep, count = nms(recons, scores, top_k=100)
+        keep, count = nms(recons, scores, top_k=200)
         boxes, masks = roirotate(feature_map[0], recons[keep[:count]], height=8)
         recognized = recognition(boxes)
         argmax = torch.argmax(recognized, dim=2)
@@ -118,5 +118,6 @@ with torch.no_grad():
                     continue
                 c = chardict.idx2char(idx)
                 decoded.append(c)
+            print(''.join(decoded))
             draw.text((xmin - 5, ymin - 5), text=''.join(decoded), fill=(0, 255, 0))
         image.show()
