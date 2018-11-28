@@ -102,11 +102,13 @@ with torch.no_grad():
         scores = detection_pred[0, :, :].view(-1)
         recons = recons.view(4, -1).transpose(0, 1)
         keep, count = nms(recons, scores, top_k=200)
-        boxes, masks = roirotate(feature_map[0], recons[keep[:count]], height=8)
+        scores = torch.sigmoid_(scores[keep[:count]])
+        recons = recons[keep[:count]]
+        boxes, masks = roirotate(feature_map[0], recons, height=8)
         recognized = recognition(boxes)
         argmax = torch.argmax(recognized, dim=2)
         draw = ImageDraw.Draw(image)
-        for i, (xmin, ymin, xmax, ymax) in enumerate(recons[keep[:count]]):
+        for i, (xmin, ymin, xmax, ymax) in enumerate(recons):
             draw.rectangle(((xmin, ymin), (xmax, ymax)), outline=(255, 0, 0), width=2)
             last = None
             decoded = []
