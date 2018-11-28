@@ -83,7 +83,7 @@ backbone = ResNet50Backbone()
 recognition = Recognition(chardict.vocab)
 detection = Detection()
 
-state = torch.load("./checkpoint/best.pth.tar")
+state = torch.load("./checkpoint/best.pth.tar", map_location=lambda storage, log: storage)
 backbone.load_state_dict(state['backbone'])
 recognition.load_state_dict(state['recognition'])
 detection.load_state_dict(state['detection'])
