@@ -55,7 +55,7 @@ def roirotate(image, boxes, height, vertical=False):
     aspects = base_widths.float() / base_heights.float()
     new_widths = aspects * height
     new_widths[new_widths != new_widths] = 0
-    new_widths = new_widths.int()
+    new_widths = new_widths.round_().int()
     max_width = torch.max(new_widths)
     max_boxes = boxes.size()[1]
 
