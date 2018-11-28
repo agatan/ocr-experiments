@@ -68,7 +68,15 @@ def main():
         raise NotImplementedError("charset {} is not implemented yet".format(args.charset))
 
     logger.info("Loading training dataset from {}".format(args.train))
-    dataset = Dataset(args.train, chardict=chardict, image_size=INPUT_SIZE, feature_map_scale=4, transform=transforms.ToTensor())
+    dataset = Dataset(
+        args.train,
+        chardict=chardict,
+        image_size=INPUT_SIZE,
+        feature_map_scale=4,
+        transform=transforms.Compose([
+            transforms.ToTensor(),
+        ]),
+    )
     loader = data.DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn=dataset.collate_fn, num_workers=8)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -83,9 +91,9 @@ def main():
     optimizer = torch.optim.Adam(training_model.parameters())
 
     def lr_sched(epoch):
-        if epoch < 2:
+        if epoch < 100:
             return 1e-3
-        elif epoch < 5:
+        elif epoch < 500:
             return 5e-4
         return 1e-4
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_sched)
